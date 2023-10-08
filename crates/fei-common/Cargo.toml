@@ -1,0 +1,9 @@
+[package]
+name = "fei-common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fei-common-macros = { path = "macros" }
+
+anyhow = "^1.0"

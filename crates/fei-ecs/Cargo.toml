@@ -1,0 +1,7 @@
+[package]
+name = "fei-ecs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fei-common = { path = "../fei-common" }

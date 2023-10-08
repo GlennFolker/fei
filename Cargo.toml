@@ -1,0 +1,16 @@
+[package]
+name = "fei"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/fei-common",
+    "crates/fei-common/macros",
+    "crates/fei-ecs",
+]
+
+[dependencies]
+fei-common = { path = "crates/fei-common" }
+fei-ecs = { path = "crates/fei-ecs" }
