@@ -9,6 +9,8 @@ members = [
     "crates/fei-common",
     "crates/fei-common/macros",
     "crates/fei-ecs",
+    "crates/fei-ecs/macros",
+    "crates/fei-macros",
 ]
 
 [dependencies]

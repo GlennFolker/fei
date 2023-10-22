@@ -1,5 +1,7 @@
 extern crate proc_macro;
 
+use fei_macros::prelude::*;
+
 use proc_macro2::TokenStream;
 use quote::{
     format_ident, quote,
@@ -9,7 +11,6 @@ use syn::{
         Parse, ParseStream,
     },
     Ident, LitInt,
-    parse_macro_input,
     Token,
 };
 
@@ -64,32 +65,37 @@ impl Parse for ImplTuples {
 /// ```
 #[proc_macro]
 pub fn impl_tuples(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = parse_macro_input!(input as ImplTuples);
-
     match (move || -> syn::Result<TokenStream> {
+        let input = syn::parse::<ImplTuples>(input)?;
+
         let implementor = input.implementor;
-        let start = if input.second.is_some() { input.first.base10_parse::<usize>()? } else { 0 };
-        let amount = if let Some(second) = input.second { second.base10_parse::<usize>()? } else { input.first.base10_parse::<usize>()? };
+        let a = input.first.base10_parse()?;
+        let b = input.second.map(|b| b.base10_parse()).transpose()?;
 
-        let mut output = Vec::<TokenStream>::new();
-        (start..=amount).for_each(|i| {
-            let params = (start..start + i).fold(Vec::<TokenStream>::new(), |mut to, accum| {
-                let idx = syn::parse_str::<LitInt>(&(accum - start).to_string()).unwrap();
-                let type_idx = format_ident!("T{idx}");
+        let start = if b.is_some() { a } else { 0 };
+        let amount = if let Some(b) = b { b } else { a };
 
-                to.push(quote! {
-                    #type_idx #idx
+        let calls = (start..=amount).fold(Vec::<TokenStream>::with_capacity(amount - start + 1), |mut calls, i| {
+            calls.push({
+                let params = (start..start + i).fold(Vec::<TokenStream>::with_capacity(i), |mut params, accum| {
+                    let idx = syn::parse_str::<LitInt>(&(accum - start).to_string()).unwrap();
+                    let type_idx = format_ident!("T{idx}");
+
+                    params.push(quote! {
+                        #type_idx #idx
+                    });
+                    params
                 });
-                to
-            });
 
-            output.push(quote! {
-                #implementor!(#(#params),*)
+                quote! {
+                    #implementor!(#(#params),*)
+                }
             });
+            calls
         });
 
-        syn::parse2(quote! {
-            #(#output;)*
+        Ok(quote! {
+            #(#calls;)*
         })
     })() {
         Ok(stream) => stream.into(),

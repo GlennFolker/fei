@@ -127,6 +127,7 @@ impl Entities {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct ReserveEntities<'a> {
     start: usize,
     end: usize,

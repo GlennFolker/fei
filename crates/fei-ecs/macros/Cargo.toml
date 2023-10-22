@@ -1,5 +1,5 @@
 [package]
-name = "fei-common-macros"
+name = "fei-ecs-macros"
 version = "0.1.0"
 edition = "2021"
 

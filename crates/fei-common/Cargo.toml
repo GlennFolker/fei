@@ -7,3 +7,4 @@ edition = "2021"
 fei-common-macros = { path = "macros" }
 
 anyhow = "^1.0"
+fixedbitset = "0.4"
