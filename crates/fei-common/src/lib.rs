@@ -1,11 +1,16 @@
-#![cfg_attr(feature = "nightly", feature(allocator_api))]
-
 pub use fei_common_macros;
 
 pub use anyhow;
 pub use fixedbitset;
+pub use fxhash;
+pub use hashbrown;
+pub use parking_lot;
 
-pub mod container;
+pub mod dyn_sparse_set;
+pub mod dyn_vec;
+pub mod sparse_set;
+
+pub mod ptr;
 
 pub mod prelude {
     pub use fei_common_macros::{
@@ -15,6 +20,67 @@ pub mod prelude {
 
     pub use anyhow;
     pub use fixedbitset;
+    pub use fxhash;
+    pub use hashbrown;
+    pub use parking_lot;
+
+    pub use super::{
+        dyn_sparse_set::DynSparseSet,
+        dyn_vec::DynVec,
+        sparse_set::{
+            SparseSet, SparseIndex,
+        },
+        FxHashMap, FxHashSet,
+    };
+}
+
+use fxhash::FxBuildHasher;
+use hashbrown::{
+    HashMap, HashSet,
+};
+use std::{
+    alloc::Layout,
+    mem,
+};
+
+pub type FxHashMap<K, V> = HashMap<K, V, FxBuildHasher>;
+pub type FxHashSet<T> = HashSet<T, FxBuildHasher>;
+
+pub const fn array_layout(item_layout: Layout, len: usize) -> (Layout, usize) {
+    let size = item_layout.size();
+    let align = item_layout.align();
+
+    let padded_size = size + (size.wrapping_add(align).wrapping_sub(1) & !align.wrapping_sub(1)).wrapping_sub(size);
+    if len == 0 {
+        // Safety: 0 is always a valid size.
+        return (unsafe { Layout::from_size_align_unchecked(0, align) }, padded_size);
+    }
+
+    let Some(alloc_size) = padded_size.checked_mul(len) else {
+        panic!("too big allocation size");
+    };
+
+    let layout = {
+        assert!(alloc_size <= isize::MAX as usize - (align - 1));
+        // Safety: Requirements just checked above.
+        unsafe { Layout::from_size_align_unchecked(alloc_size, align) }
+    };
+
+    (layout, padded_size)
+}
+
+#[inline]
+pub const fn drop_for<T>() -> Option<unsafe fn(*mut u8)> {
+    #[inline]
+    unsafe fn dropper<T>(ptr: *mut u8) {
+        ptr.cast::<T>().drop_in_place();
+    }
+
+    if mem::needs_drop::<T>() {
+        Some(dropper::<T>)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

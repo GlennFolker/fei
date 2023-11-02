@@ -58,7 +58,7 @@ pub fn module(name: &str) -> syn::Result<Option<Path>> {
                                 // `fei-*` is imported by `<x> = { package = "fei-*" }`; returning `<x>`.
                                 return Some(syn::parse_str(alias)).transpose();
                             } else if actual == "fei" {
-                                // `fei-*` is imported by `<x> = { package = "fei" }`; returning `fei::*`.
+                                // `fei-*` is imported by `<x> = { package = "fei" }`; returning `<x>::*`.
                                 let mut fei = syn::parse_str::<Path>(alias)?;
                                 fei.segments.push(syn::parse_str(name.strip_prefix("fei-").unwrap_or(name))?);
                                 return Ok(Some(fei));

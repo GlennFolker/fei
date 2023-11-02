@@ -40,7 +40,7 @@ pub struct SparseSet<I: SparseIndex, T> {
     dense: FixedBitSet,
     sparse: Vec<MaybeUninit<T>>,
     len: usize,
-    _marker: PhantomData<I>
+    _marker: PhantomData<I>,
 }
 
 impl<I: SparseIndex, T> SparseSet<I, T> {
@@ -249,6 +249,13 @@ impl<I: SparseIndex, T: Clone> Clone for SparseSet<I, T> {
             len: self.len,
             _marker: PhantomData,
         }
+    }
+}
+
+impl<I: SparseIndex, T: Default> Default for SparseSet<I, T> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -462,7 +469,9 @@ mod tests {
 
         // Remove checks.
         assert_eq!(set.remove(12), Some(Data::new(69)));
+        assert_eq!(set.remove(12), None);
         assert_eq!(set.remove(20), Some(Data::new(420)));
+        assert_eq!(set.remove(20), None);
         assert_eq!(set.remove(25), None);
         assert_eq!(set.len, 2);
 
