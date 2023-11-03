@@ -36,6 +36,11 @@ impl<'a> PtrOwned<'a> {
     }
 
     #[inline]
+    pub unsafe fn drop_with(self, dropper: unsafe fn(*mut u8)) {
+        dropper(self.ptr.as_ptr());
+    }
+
+    #[inline]
     pub unsafe fn deref<T>(&self) -> &T {
         self.ptr.cast::<T>().as_ref()
     }
@@ -100,6 +105,11 @@ impl<'a> PtrMut<'a> {
     #[inline]
     pub unsafe fn drop_in_place_as<T>(&mut self) {
         self.ptr.cast::<T>().as_ptr().drop_in_place()
+    }
+
+    #[inline]
+    pub unsafe fn drop_in_place_with(&mut self, dropper: unsafe fn(*mut u8)) {
+        dropper(self.ptr.as_ptr());
     }
 
     #[inline]

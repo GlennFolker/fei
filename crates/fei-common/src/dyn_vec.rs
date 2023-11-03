@@ -19,15 +19,50 @@ pub struct DynVec {
     layout: Layout,
     array_layout: Layout,
     array_stride: usize,
-    dropper: Option<unsafe fn(*mut u8)>,
+    dropper: DynVecDrop,
 
     len: usize,
     cap: usize,
 }
 
+#[derive(Copy, Clone)]
+pub enum DynVecDrop {
+    None,
+    Automatic(unsafe fn(*mut u8)),
+    Manual(unsafe fn(*mut u8)),
+}
+
+impl DynVecDrop {
+    #[inline]
+    pub fn into_manual(self) -> Self {
+        let Self::Automatic(dropper) = self else {
+            return self;
+        };
+        Self::Manual(dropper)
+    }
+
+    #[inline]
+    pub fn into_automatic(self) -> Self {
+        let Self::Manual(dropper) = self else {
+            return self;
+        };
+        Self::Automatic(dropper)
+    }
+}
+
+impl From<Option<unsafe fn(*mut u8)>> for DynVecDrop {
+    #[inline]
+    fn from(dropper: Option<unsafe fn(*mut u8)>) -> Self {
+        match dropper {
+            Some(dropper) => Self::Automatic(dropper),
+            None => Self::None,
+        }
+    }
+}
+
 impl DynVec {
     #[inline]
-    pub const unsafe fn new(layout: Layout, drop: Option<unsafe fn(*mut u8)>) -> Self {
+    pub const unsafe fn new(layout: Layout, drop: DynVecDrop) -> Self {
         let (array_layout, array_stride) = array_layout(layout, 0);
         Self {
             array: NonNull::dangling(),
@@ -43,7 +78,10 @@ impl DynVec {
 
     #[inline]
     pub const fn typed<T>() -> Self {
-        unsafe { Self::new(Layout::new::<T>(), drop_for::<T>()) }
+        unsafe { Self::new(Layout::new::<T>(), match drop_for::<T>() {
+            Some(dropper) => DynVecDrop::Automatic(dropper),
+            None => DynVecDrop::None,
+        }) }
     }
 
     #[inline]
@@ -68,6 +106,11 @@ impl DynVec {
     #[inline]
     pub const fn array_stride(&self) -> usize {
         self.array_stride
+    }
+
+    #[inline]
+    pub const fn dropper(&self) -> DynVecDrop {
+        self.dropper
     }
 
     #[inline]
@@ -96,8 +139,12 @@ impl DynVec {
     }
 
     #[inline]
-    pub unsafe fn swap<R>(&mut self, index: usize, value: PtrOwned, prev: impl FnOnce(PtrOwned) -> R) -> Option<R> {
-        (index < self.len).then(|| self.swap_unchecked(index, value, prev))
+    pub unsafe fn swap<'a, R>(&mut self, index: usize, value: PtrOwned<'a>, prev: impl FnOnce(PtrOwned) -> R) -> Result<R, PtrOwned<'a>> {
+        if index < self.len {
+            Ok(self.swap_unchecked(index, value, prev))
+        } else {
+            Err(value)
+        }
     }
 
     #[inline]
@@ -108,11 +155,19 @@ impl DynVec {
     }
 
     #[inline]
-    pub unsafe fn push(&mut self, value: PtrOwned) {
+    pub unsafe fn write<'a>(&mut self, index: usize, value: PtrOwned<'a>) -> Result<(), PtrOwned<'a>> {
+        if index < self.len {
+            Ok(self.write_unchecked(index, value))
+        } else {
+            Err(value)
+        }
+    }
+
+    #[inline]
+    pub unsafe fn write_unchecked(&mut self, index: usize, value: PtrOwned) {
         let size = self.layout.size();
-        self.reserve(1);
-        self.get_unchecked_mut(self.len).write(value, size);
-        self.len += 1;
+        self.get_unchecked_mut(index)
+            .write(value, size);
     }
 
     #[inline]
@@ -158,6 +213,14 @@ impl DynVec {
     }
 
     #[inline]
+    pub unsafe fn push(&mut self, value: PtrOwned) {
+        let size = self.layout.size();
+        self.reserve(1);
+        self.get_unchecked_mut(self.len).write(value, size);
+        self.len += 1;
+    }
+
+    #[inline]
     pub fn reserve(&mut self, additional: usize) {
         if additional > self.cap.wrapping_sub(self.len) {
             self.resize((self.cap * 2).max(self.len.checked_add(additional).expect("overflow")).max(if self.array_stride == 1 {
@@ -195,7 +258,7 @@ impl DynVec {
             }
         } else {
             if new_cap < self.len {
-                if let Some(dropper) = self.dropper {
+                if let DynVecDrop::Automatic(dropper) = self.dropper {
                     for i in new_cap..self.len {
                         unsafe { dropper(self.array.as_ptr().add(i * self.array_stride)) };
                     }
@@ -218,7 +281,7 @@ impl DynVec {
 impl Drop for DynVec {
     #[inline]
     fn drop(&mut self) {
-        if let Some(dropper) = self.dropper {
+        if let DynVecDrop::Automatic(dropper) = self.dropper {
             for i in 0..self.len {
                 unsafe { dropper(self.array.as_ptr().add(i * self.array_stride)) };
             }
@@ -273,32 +336,33 @@ mod tests {
             PtrOwned::take(Data::new(159), |ptr| vec.push(ptr));
             PtrOwned::take(Data::new(69), |ptr| vec.push(ptr));
             PtrOwned::take(Data::new(420), |ptr| vec.push(ptr));
-            PtrOwned::take(Data::new(281), |ptr| vec.push(ptr));
 
             // Length and capacity check.
-            assert_eq!(vec.len, 5);
-            assert!(vec.cap >= 5);
+            assert_eq!(vec.len, 4);
+            assert!(vec.cap >= 4);
 
             // Element check.
             assert_eq!(vec.get(0).unwrap().deref::<Data>(), &Data::new(314));
             assert_eq!(vec.get(1).unwrap().deref::<Data>(), &Data::new(159));
             assert_eq!(vec.get(2).unwrap().deref::<Data>(), &Data::new(69));
             assert_eq!(vec.get(3).unwrap().deref::<Data>(), &Data::new(420));
-            assert_eq!(vec.get(4).unwrap().deref::<Data>(), &Data::new(281));
 
             // Removal check.
             assert_eq!(vec.remove(0, |ptr| ptr.read::<Data>()).unwrap(), Data::new(314));
             assert_eq!(vec.swap_remove(1, |ptr| ptr.read::<Data>()).unwrap(), Data::new(69));
 
             // Length, capacity, and drop check.
-            assert_eq!(vec.len, 3);
-            assert!(vec.cap >= 3);
-            assert_eq!(*GLOBAL.read().unwrap(), 3);
+            assert_eq!(vec.len, 2);
+            assert!(vec.cap >= 2);
+            assert_eq!(*GLOBAL.read().unwrap(), 2);
 
             // Shrink check.
             vec.shrink_to_fit();
             assert_eq!(vec.cap, vec.len);
-            assert_eq!(*GLOBAL.read().unwrap(), 3);
+            assert_eq!(*GLOBAL.read().unwrap(), 2);
+
+            drop(vec);
+            assert_eq!(*GLOBAL.read().unwrap(), 0);
         }
     }
 }

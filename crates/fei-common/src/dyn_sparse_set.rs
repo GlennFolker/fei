@@ -1,5 +1,7 @@
 use crate::{
-    dyn_vec::DynVec,
+    dyn_vec::{
+        DynVec, DynVecDrop,
+    },
     ptr::{
         Ptr, PtrMut, PtrOwned,
     },
@@ -15,7 +17,6 @@ use std::{
 pub struct DynSparseSet<I: SparseIndex> {
     dense: FixedBitSet,
     sparse: DynVec,
-    dropper: Option<unsafe fn(*mut u8)>,
     len: usize,
     _marker: PhantomData<I>,
 }
@@ -25,8 +26,10 @@ impl<I: SparseIndex> DynSparseSet<I> {
     pub const unsafe fn new(item_layout: Layout, drop: Option<unsafe fn(*mut u8)>) -> Self {
         Self {
             dense: FixedBitSet::new(),
-            sparse: DynVec::new(item_layout, None),
-            dropper: drop,
+            sparse: DynVec::new(item_layout, match drop {
+                Some(dropper) => DynVecDrop::Manual(dropper),
+                None => DynVecDrop::None,
+            }),
             len: 0,
             _marker: PhantomData,
         }
@@ -36,8 +39,10 @@ impl<I: SparseIndex> DynSparseSet<I> {
     pub const fn typed<T>() -> Self {
         Self {
             dense: FixedBitSet::new(),
-            sparse: unsafe { DynVec::new(Layout::new::<T>(), None) },
-            dropper: drop_for::<T>(),
+            sparse: unsafe { DynVec::new(Layout::new::<T>(), match drop_for::<T>() {
+                Some(dropper) => DynVecDrop::Manual(dropper),
+                None => DynVecDrop::None,
+            }) },
             len: 0,
             _marker: PhantomData,
         }
@@ -135,10 +140,14 @@ impl<I: SparseIndex> DynSparseSet<I> {
 impl<I: SparseIndex> Drop for DynSparseSet<I> {
     #[inline]
     fn drop(&mut self) {
-        if let Some(dropper) = self.dropper {
+        if let DynVecDrop::Manual(dropper) = self.sparse.dropper() {
             for index in self.dense.ones() {
-                // Safety: If the key exists, then the value exists and is initialized.
-                unsafe { dropper(self.sparse.get_unchecked_mut(index).into_ptr()) };
+                unsafe {
+                    // Safety: If the key exists, then the value exists and is initialized.
+                    self.sparse
+                        .get_unchecked_mut(index)
+                        .drop_in_place_with(dropper);
+                }
             }
         }
     }

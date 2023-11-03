@@ -6,6 +6,9 @@ use std::{
     mem::{
         ManuallyDrop, MaybeUninit,
     },
+    ops::{
+        Index, IndexMut,
+    },
     ptr,
 };
 
@@ -194,6 +197,22 @@ impl<I: SparseIndex, T> SparseSet<I, T> {
             sparse: self.sparse.as_mut_ptr(),
             _marker: PhantomData,
         }
+    }
+}
+
+impl<I: SparseIndex, T> Index<I> for SparseSet<I, T> {
+    type Output = T;
+
+    #[inline]
+    fn index(&self, index: I) -> &Self::Output {
+        self.get(index).unwrap()
+    }
+}
+
+impl<I: SparseIndex, T> IndexMut<I> for SparseSet<I, T> {
+    #[inline]
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        self.get_mut(index).unwrap()
     }
 }
 
