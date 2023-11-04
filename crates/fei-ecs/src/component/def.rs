@@ -55,9 +55,9 @@ impl ComponentInfo {
 #[derive(Copy, Clone, Debug)]
 pub enum ComponentStorage {
     /// A table storage stores archetypes (i.e., the set of all components that belongs to an
-    /// [`Entity`]) as a structure of arrays, offering faster iteration and cheaper memory requirements.
+    /// [`Entity`](crate::entity::Entity)) as a structure of arrays, offering faster iteration and cheaper memory requirements.
     Table,
     /// A sparse set storage stores each component types separately in a sparse set indexed by
-    /// [`Entity::id`], offering faster addition and removal.
+    /// [`Entity::id`](crate::entity::Entity::id), offering faster addition and removal.
     SparseSet,
 }

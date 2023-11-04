@@ -61,7 +61,7 @@ pub const fn array_layout(item_layout: Layout, len: usize) -> (Layout, usize) {
     };
 
     let layout = {
-        assert!(alloc_size <= isize::MAX as usize - (align - 1));
+        assert!(alloc_size <= isize::MAX as usize - (align - 1), "too big allocation size");
         // Safety: Requirements just checked above.
         unsafe { Layout::from_size_align_unchecked(alloc_size, align) }
     };

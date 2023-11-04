@@ -67,9 +67,7 @@ impl<I: SparseIndex> DynSparseSet<I> {
             }
 
             // Safety: Sparse container is ensured to contain uninitialized value at `index`.
-            let item_size = self.sparse.item_size();
-            self.sparse.get_unchecked_mut(index).write(value, item_size);
-
+            self.sparse.write_unchecked(index, value);
             None
         }
     }
@@ -132,7 +130,7 @@ impl<I: SparseIndex> DynSparseSet<I> {
         };
 
         // Safety: Anything beyond [0, `len`) is uninitialized and can be shrunk.
-        self.sparse.set_len(len);
+        unsafe { self.sparse.set_len(len) };
         self.sparse.shrink_to_fit();
     }
 }

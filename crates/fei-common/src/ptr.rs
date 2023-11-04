@@ -69,11 +69,6 @@ impl<'a> PtrOwned<'a> {
     pub fn as_mut(&mut self) -> PtrMut {
         unsafe { PtrMut::new(self.ptr) }
     }
-
-    #[inline]
-    pub fn into_ptr(self) -> *mut u8 {
-        self.ptr.as_ptr()
-    }
 }
 
 pub struct PtrMut<'a> {
@@ -114,7 +109,7 @@ impl<'a> PtrMut<'a> {
 
     #[inline]
     pub unsafe fn write(&mut self, value: PtrOwned, size: usize) {
-        self.ptr.as_ptr().copy_from_nonoverlapping(value.into_ptr(), size);
+        self.ptr.as_ptr().copy_from_nonoverlapping(value.ptr.as_ptr(), size);
     }
 
     #[inline]
@@ -140,11 +135,6 @@ impl<'a> PtrMut<'a> {
     #[inline]
     pub fn as_ref(&mut self) -> Ptr {
         unsafe { Ptr::new(self.ptr) }
-    }
-
-    #[inline]
-    pub fn into_ptr(self) -> *mut u8 {
-        self.ptr.as_ptr()
     }
 }
 
@@ -183,11 +173,6 @@ impl<'a> Ptr<'a> {
     #[inline]
     pub unsafe fn byte_offset(self, offset: isize) -> Self {
         Self::new(NonNull::new_unchecked(self.ptr.as_ptr().offset(offset)))
-    }
-
-    #[inline]
-    pub fn into_ptr(self) -> *const u8 {
-        self.ptr.as_ptr()
     }
 }
 

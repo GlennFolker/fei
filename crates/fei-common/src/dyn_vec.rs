@@ -1,3 +1,5 @@
+//! An unsafe statically-unknown homogenous list data container, similar to [`Vec`].
+
 use crate::{
     ptr::{
         Ptr, PtrMut, PtrOwned,
@@ -13,7 +15,64 @@ use std::{
     ptr::NonNull,
 };
 
-/// An unsafe statically-unknown homogenous list data container, similar to [`Vec`](Vec).
+/// An unsafe statically-unknown homogenous list data container, similar to [`Vec`]. Due to the
+/// nature of unknown data types, this data collection is highly unsafe and should only be used if
+/// absolutely necessary.
+///
+/// # Example
+/// ```
+/// use fei_common::{
+///     dyn_vec::DynVec,
+///     ptr::PtrOwned,
+/// };
+///
+/// #[derive(Copy, Clone, Eq, PartialEq)]
+/// struct Data(u32);
+///
+/// let mut vec = DynVec::typed::<Data>();
+/// // Alternatively, you can do:
+/// // `unsafe { DynVec::new(Layout::new::<MyData>(), fei_common::drop_for::<MyData>().into()) }`
+///
+/// // The vector is initially not holding any memory.
+/// assert_eq!(vec.len(), 0);
+/// assert_eq!(vec.capacity(), 0);
+///
+/// // Push elements to the vector.
+/// unsafe {
+///     PtrOwned::take(Data(314), |ptr| vec.push(ptr));
+///     PtrOwned::take(Data(159), |ptr| vec.push(ptr));
+///     PtrOwned::take(Data(271), |ptr| vec.push(ptr));
+///     PtrOwned::take(Data(828), |ptr| vec.push(ptr));
+/// }
+///
+/// // The vector has allocated a buffer.
+/// assert_eq!(vec.len(), 4);
+/// assert!(vec.capacity() >= 4);
+///
+/// // Pop elements from the vector.
+/// unsafe {
+///     assert_eq!(vec.pop(|ptr| ptr.read::<Data>()), Some(Data(828)));
+///     assert_eq!(vec.pop(|ptr| ptr.read::<Data>()), Some(Data(271)));
+/// }
+///
+/// // Access the vector's elements.
+/// unsafe {
+///     assert_eq!(vec.get(0).unwrap().deref::<Data>(), &Data(314));
+///     assert_eq!(vec.get_mut(1).unwrap().deref_mut::<Data>(), &mut Data(159));
+///     assert_eq!(vec.get(2), None);
+/// }
+///
+/// // Clear the vector.
+/// vec.clear();
+/// assert_eq!(vec.len(), 0);
+/// ```
+///
+/// # Safety
+/// Given a `DynVec` and its data type `T`, the following must be ensured to avoid
+/// [Undefined Behavior](https://doc.rust-lang.org/beta/reference/behavior-considered-undefined.html):
+/// - `T` must outlive the vector.
+/// - All data types inserted to the vector must be equivalent to `T`; i.e., it must have the same
+///   size and alignment as `T`, and can be safely dropped with [the dropper function](DynVec::dropper).
 pub struct DynVec {
     array: NonNull<u8>,
     layout: Layout,
@@ -25,14 +84,31 @@ pub struct DynVec {
     cap: usize,
 }
 
+/// Defines how items in the [`DynVec`] are dropped. Most commonly created with
+/// [`drop_for`]`::<T>().into()`, which will resolve to [`DynVecDrop::None`] for
+/// [`None`] and [`DynVecDrop::Automatic`] for [`Some`].
+///
+/// # Safety
+/// - Argument of this function is the aligned type-erased pointer to the item to be dropped
+///   in-place.
+/// - The function must only call the drop implementation of the item's actual type, most commonly
+///   done by casting the pointer to `T` and invoking [`drop_in_place`](std::ptr::drop_in_place).
 #[derive(Copy, Clone)]
 pub enum DynVecDrop {
+    /// The items will *not* be dropped. The only sensible reason this is chosen is to optimize types
+    /// that don't need to be dropped, as per [`needs_drop`](std::mem::needs_drop).
     None,
+    /// The items will be dropped once the vector is dropped. This is the most common behavior, as
+    /// seen in regular [`Vec`]s.
     Automatic(unsafe fn(*mut u8)),
+    /// The items will *not* be dropped, but users are still able to manually drop the items
+    /// [in-place](PtrMut::drop_in_place_with) through the [`dropper`](DynVec::dropper) getter. This
+    /// is equivalent of a [`Vec`] containing [`MaybeUninit<T>`](std::mem::MaybeUninit).
     Manual(unsafe fn(*mut u8)),
 }
 
 impl DynVecDrop {
+    /// Converts [`Automatic`](DynVecDrop::Automatic) to [`Manual`](DynVecDrop::Manual).
     #[inline]
     pub fn into_manual(self) -> Self {
         let Self::Automatic(dropper) = self else {
@@ -41,6 +117,7 @@ impl DynVecDrop {
         Self::Manual(dropper)
     }
 
+    /// Converts [`Manual`](DynVecDrop::Manual) to [`Automatic`](DynVecDrop::Automatic).
     #[inline]
     pub fn into_automatic(self) -> Self {
         let Self::Manual(dropper) = self else {
@@ -61,6 +138,11 @@ impl From<Option<unsafe fn(*mut u8)>> for DynVecDrop {
 }
 
 impl DynVec {
+    /// Constructs a new [`DynVec`] from the item layout and drop implementation without pre-allocating
+    /// the buffer.
+    ///
+    /// # Safety
+    /// - The dropper must follow the safety requirements mentioned in [`DynVecDrop`].
     #[inline]
     pub const unsafe fn new(layout: Layout, drop: DynVecDrop) -> Self {
         let (array_layout, array_stride) = array_layout(layout, 0);
@@ -76,19 +158,49 @@ impl DynVec {
         }
     }
 
+    /// Constructs a new [`DynVec`] from the item layout and drop implementation that pre-allocates
+    /// the buffer with the size of the given `capacity`.
+    ///
+    /// # Safety
+    /// - The dropper must follow the safety requirements mentioned in [`DynVecDrop`].
+    #[inline]
+    pub unsafe fn with_capacity(layout: Layout, drop: DynVecDrop, capacity: usize) -> Self {
+        let mut this = Self::new(layout, drop);
+        if capacity == 0 { return this; }
+
+        this.resize(capacity);
+        this
+    }
+
+    /// Safely constructs a new [`DynVec`] containing `T` with automatic dropping without
+    /// pre-allocating the buffer.
     #[inline]
     pub const fn typed<T>() -> Self {
+        // Safety: `drop_for` will always return a sound drop implementation.
         unsafe { Self::new(Layout::new::<T>(), match drop_for::<T>() {
             Some(dropper) => DynVecDrop::Automatic(dropper),
             None => DynVecDrop::None,
         }) }
     }
 
+    /// Safely constructs a new [`DynVec`] containing `T` with automatic dropping that pre-allocates
+    /// the buffer with the size of the given `capacity`.
+    #[inline]
+    pub fn typed_with_capacity<T>(capacity: usize) -> Self {
+        let mut this = Self::typed::<T>();
+        if capacity == 0 { return this; }
+
+        this.resize(capacity);
+        this
+    }
+
+    /// Returns the length (the number of elements) of the vector.
     #[inline]
     pub const fn len(&self) -> usize {
         self.len
     }
 
+    /// Returns the maximum [length](DynVec::len) the vector can hold without a larger reallocation.
     #[inline]
     pub const fn capacity(&self) -> usize {
         if self.layout.size() == 0 {
@@ -98,46 +210,78 @@ impl DynVec {
         }
     }
 
+    /// Returns the contained item type's size, in bytes. For usage with pointer offsets, see
+    /// [`array_stride`](DynVec::array_stride).
     #[inline]
     pub const fn item_size(&self) -> usize {
         self.layout.size()
     }
 
+    /// Returns the pointer offset between an item and the next one, in bytes.
     #[inline]
     pub const fn array_stride(&self) -> usize {
         self.array_stride
     }
 
+    /// Returns the drop implementation this vector uses.
     #[inline]
     pub const fn dropper(&self) -> DynVecDrop {
         self.dropper
     }
 
+    /// Forcibly sets the [length](DynVec::len) of the vector for advanced usages. This does *not*
+    /// drop leftover items if the new length is lesser, and exposes *uninitialized* items if the new
+    /// length is greater.
+    ///
+    /// # Safety
+    /// Let [`cap`](DynVec::capacity) be the current maximum length, `prev_len` be the current length,
+    /// and [`dropper`](DynVec::dropper) be the drop implementation, callers must ensure the following:
+    /// - `len` <= `cap`.
+    /// - If `dropper` is [`Automatic`](DynVecDrop::Automatic) and `len` > `prev_len`, new exposed
+    ///   uninitialized items must immediately be written to, most commonly by using
+    ///   [`write`](DynVec::write) or [`write_unchecked`](DynVec::write_unchecked).
     #[inline]
-    pub fn set_len(&mut self, len: usize) {
+    pub unsafe fn set_len(&mut self, len: usize) {
+        debug_assert!(len <= self.cap);
         self.len = len;
     }
 
+    /// Returns an untyped immutable pointer to the item at `index`, with bounds-checking.
     #[inline]
     pub fn get(&self, index: usize) -> Option<Ptr> {
         (index < self.len).then(|| unsafe { self.get_unchecked(index) })
     }
 
+    /// Returns an untyped immutable pointer to the item at `index`, without bounds-checking.
+    ///
+    /// # Safety
+    /// `index` must be lesser than [`len`](DynVec::len).
     #[inline]
     pub unsafe fn get_unchecked(&self, index: usize) -> Ptr {
+        debug_assert!(index < self.len);
         Ptr::new(NonNull::new_unchecked(self.array.as_ptr().add(index * self.array_stride)))
     }
 
+    /// Returns an untyped mutable pointer to the item at `index`, with bounds-checking.
     #[inline]
     pub fn get_mut(&mut self, index: usize) -> Option<PtrMut> {
         (index < self.len).then(|| unsafe { self.get_unchecked_mut(index) })
     }
 
+    /// Returns an untyped mutable pointer to the item at `index`, without bounds-checking.
+    ///
+    /// # Safety
+    /// `index` must be lesser than [`len`](DynVec::len).
     #[inline]
     pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> PtrMut {
+        debug_assert!(index < self.len);
         PtrMut::new(NonNull::new_unchecked(self.array.as_ptr().add(index * self.array_stride)))
     }
 
+    /// Swaps an item at `index` with `value`, with bounds-checking.
+    ///
+    /// # Safety
+    /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn swap<'a, R>(&mut self, index: usize, value: PtrOwned<'a>, prev: impl FnOnce(PtrOwned) -> R) -> Result<R, PtrOwned<'a>> {
         if index < self.len {
@@ -147,13 +291,24 @@ impl DynVec {
         }
     }
 
+    /// Swaps an item at `index` with `value`, without bounds-checking.
+    ///
+    /// # Safety
+    /// - `index` must be lesser than [`len`](DynVec::len).
+    /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn swap_unchecked<R>(&mut self, index: usize, value: PtrOwned, prev: impl FnOnce(PtrOwned) -> R) -> R {
+        debug_assert!(index < self.len);
+
         let size = self.layout.size();
         self.get_unchecked_mut(index)
             .swap(value, size, prev)
     }
 
+    /// Overwrites an item at `index` with `value` without running its destructor.
+    ///
+    /// # Safety
+    /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn write<'a>(&mut self, index: usize, value: PtrOwned<'a>) -> Result<(), PtrOwned<'a>> {
         if index < self.len {
@@ -163,18 +318,34 @@ impl DynVec {
         }
     }
 
+    /// Overwrites an item at `index` with `value` without running its destructor.
+    ///
+    /// # Safety
+    /// - `index` must be lesser than [`len`](DynVec::len).
+    /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn write_unchecked(&mut self, index: usize, value: PtrOwned) {
+        debug_assert!(index < self.len);
+
         let size = self.layout.size();
         self.get_unchecked_mut(index)
             .write(value, size);
     }
 
+    /// Removes an item at `index` and shifts the rest of the items to fill the empty space.
+    ///
+    /// # Safety
+    /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn remove<R>(&mut self, index: usize, removed: impl FnOnce(PtrOwned) -> R) -> Option<R> {
         (index < self.len).then(|| self.remove_unchecked(index, removed))
     }
 
+    /// Removes an item at `index` and shifts the rest of the items to fill the empty space.
+    ///
+    /// # Safety
+    /// - `index` must be lesser than [`len`](DynVec::len).
+    /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn remove_unchecked<R>(&mut self, index: usize, removed: impl FnOnce(PtrOwned) -> R) -> R {
         let ret = removed(self.get_unchecked_mut(index).own());
@@ -191,11 +362,20 @@ impl DynVec {
         ret
     }
 
+    /// Removes an item at `index` and moves the last item to `index` to fill the empty space, if any.
+    ///
+    /// # Safety
+    /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn swap_remove<R>(&mut self, index: usize, removed: impl FnOnce(PtrOwned) -> R) -> Option<R> {
         (index < self.len).then(|| self.swap_remove_unchecked(index, removed))
     }
 
+    /// Removes an item at `index` and moves the last item to `index` to fill the empty space, if any.
+    ///
+    /// # Safety
+    /// - `index` must be lesser than [`len`](DynVec::len).
+    /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn swap_remove_unchecked<R>(&mut self, index: usize, removed: impl FnOnce(PtrOwned) -> R) -> R {
         let ret = removed(self.get_unchecked_mut(index).own());
@@ -212,6 +392,10 @@ impl DynVec {
         ret
     }
 
+    /// Pushes an item to the back of the vector.
+    ///
+    /// # Safety
+    /// `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn push(&mut self, value: PtrOwned) {
         let size = self.layout.size();
@@ -220,6 +404,46 @@ impl DynVec {
         self.len += 1;
     }
 
+    /// Pops an item from the back of the vector, with bounds-checking. Note that while the function
+    /// itself is safe, using the owning pointer passed to `popped` is unsafe.
+    #[inline]
+    pub fn pop<R>(&mut self, popped: impl FnOnce(PtrOwned) -> R) -> Option<R> {
+        // Safety: Bounds-checking is done.
+        (self.len > 0).then(|| unsafe { self.pop_unchecked(popped) })
+    }
+
+    /// Pops an item from the back of the vector, without bounds-checking. Note that while the function
+    /// itself is safe asides from the bounds-checking, using the owning pointer passed to `popped`
+    /// is unsafe.
+    ///
+    /// # Safety
+    /// [`len`](DynVec::len) must be greater than 0.
+    #[inline]
+    pub unsafe fn pop_unchecked<R>(&mut self, popped: impl FnOnce(PtrOwned) -> R) -> R {
+        let ret = popped(self.get_unchecked_mut(self.len - 1).own());
+        self.len -= 1;
+        ret
+    }
+
+    /// Clears the vector, dropping the items as per the drop implementation.
+    #[inline]
+    pub fn clear(&mut self) {
+        if let DynVecDrop::Automatic(dropper) = self.dropper {
+            for i in 0..self.len {
+                // Safety:
+                // - `len` <= `capacity`, so the pointer will always be within the same allocated object.
+                // - The buffer size never crosses `isize::MAX`, so the offset never overflows.
+                // - Safety requirements on `dropper` is enforced in the constructor.
+                unsafe { dropper(self.array.as_ptr().add(i * self.array_stride)) };
+            }
+        }
+
+        self.len = 0;
+    }
+
+    /// Reallocates the buffer such that [`push`](DynVec::push)ing `additional` amount of items will
+    /// not cause another reallocation. The resulting [`capacity`](DynVec::capacity) is greater than
+    /// or equal to [`len`](DynVec::len) + `additional`, given that a reallocation is actually done.
     #[inline]
     pub fn reserve(&mut self, additional: usize) {
         if additional > self.cap.wrapping_sub(self.len) {
@@ -233,25 +457,49 @@ impl DynVec {
         }
     }
 
+    /// Reallocates the buffer such that [`push`](DynVec::push)ing `additional` amount of items will
+    /// not cause another reallocation. The resulting [`capacity`](DynVec::capacity) is equal to
+    /// [`len`](DynVec::len) + `additional`, given that a reallocation is actually done.
+    #[inline]
+    pub fn reserve_exact(&mut self, additional: usize) {
+        if additional > self.cap.wrapping_sub(self.len) {
+            self.resize(self.len.checked_add(additional).expect("overflow"));
+        }
+    }
+
+    /// Shrinks the buffer such that [`len`](DynVec::len) is equal to [`capacity`](DynVec::capacity),
+    /// dropping the items as per the drop implementation.
     #[inline]
     pub fn shrink_to_fit(&mut self) {
         self.resize(self.len);
     }
 
+    /// Resizes the buffer size to `new_cap`, dropping the items in case of shrinking as per the drop
+    /// implementation.
     fn resize(&mut self, new_cap: usize) {
+        // Don't bother if the capacity doesn't even change.
         if self.cap == new_cap { return };
+        // Simply deallocate if the new capacity is 0.
         if self.cap != 0 && new_cap == 0 {
+            // Safety:
+            // - Same allocator is used.
+            // - `array_layout` is used in the `alloc` of `array`.
             unsafe { dealloc(self.array.as_ptr(), self.array_layout) };
 
             self.array = NonNull::dangling();
             self.cap = 0;
+            return;
         }
 
+        // Don't allocate buffer for ZSTs.
         let size = self.layout.size();
         if size == 0 { return; }
 
         let (new_array_layout, new_array_stride) = array_layout(self.layout, new_cap);
         let array = if self.cap == 0 {
+            // Safety:
+            // - ZST-check is done.
+            // - `new_array_layout`'s size never overflows `isize::MAX`.
             match NonNull::new(unsafe { alloc(new_array_layout) }) {
                 Some(array) => array,
                 None => handle_alloc_error(new_array_layout),
@@ -265,6 +513,11 @@ impl DynVec {
                 }
             }
 
+            // Safety:
+            // - Same allocator is used.
+            // - `array_layout` is used in the `alloc` of `array`.
+            // - `new_array_layout`'s size never overflows `isize::MAX`.
+            // - `new_cap` > 0 at this point.
             match NonNull::new(unsafe { realloc(self.array.as_ptr(), self.array_layout, new_array_layout.size()) }) {
                 Some(array) => array,
                 None => handle_alloc_error(new_array_layout),
@@ -283,11 +536,18 @@ impl Drop for DynVec {
     fn drop(&mut self) {
         if let DynVecDrop::Automatic(dropper) = self.dropper {
             for i in 0..self.len {
+                // Safety:
+                // - `len` <= `capacity`, so the pointer will always be within the same allocated object.
+                // - The buffer size never crosses `isize::MAX`, so the offset never overflows.
+                // - Safety requirements on `dropper` is enforced in the constructor.
                 unsafe { dropper(self.array.as_ptr().add(i * self.array_stride)) };
             }
         }
 
         if self.layout.size() != 0 && self.cap != 0 {
+            // Safety:
+            // - Same allocator is used.
+            // - `array_layout` is used in the `alloc` of `array`.
             unsafe { dealloc(self.array.as_ptr(), self.array_layout) };
         }
     }
@@ -343,9 +603,9 @@ mod tests {
 
             // Element check.
             assert_eq!(vec.get(0).unwrap().deref::<Data>(), &Data::new(314));
-            assert_eq!(vec.get(1).unwrap().deref::<Data>(), &Data::new(159));
-            assert_eq!(vec.get(2).unwrap().deref::<Data>(), &Data::new(69));
-            assert_eq!(vec.get(3).unwrap().deref::<Data>(), &Data::new(420));
+            assert_eq!(vec.get_mut(1).unwrap().deref_mut::<Data>(), &mut Data::new(159));
+            assert_eq!(vec.get_unchecked(2).deref::<Data>(), &Data::new(69));
+            assert_eq!(vec.get_unchecked_mut(3).deref_mut::<Data>(), &mut Data::new(420));
 
             // Removal check.
             assert_eq!(vec.remove(0, |ptr| ptr.read::<Data>()).unwrap(), Data::new(314));
