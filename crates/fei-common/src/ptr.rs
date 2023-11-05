@@ -8,8 +8,8 @@ use std::{
 };
 
 /// Represents an untyped pointer that logically owns the data over the lifetime `'a`. This pointer is
-/// responsible for calling the data's drop implementation, but *not* deallocation. As such, this
-/// pointer type can't be cloned.
+/// responsible for calling the data's drop implementation, but *not* deallocation. This pointer is
+/// mentally equivalent to [`ManuallyDrop<T>`].
 ///
 /// # Examples
 /// Safely constructing a `PtrOwned` from an owned value is done by using [`take`](PtrOwned::take):
@@ -115,8 +115,8 @@ impl<'a> PtrOwned<'a> {
     /// - The scope must logically own the pointed-to value, in the sense of nothing else currently
     ///   or in the future may obtain a reference to the value.
     /// - The original value mustn't be dropped, preferably by wrapping it inside [`ManuallyDrop`].
-    /// - The resulting `PtrOwned` mustn't live longer than the pointed-to value; it must be
-    ///   consumed before the original value goes out of scope.
+    /// - The resulting `PtrOwned` mustn't live longer than the pointed-to value; it must be consumed
+    ///   before the original value goes out of scope.
     /// - `ptr` must point to an initialized instance of `T`.
     /// - `ptr` must be valid for both reads and writes.
     /// - `ptr` must be properly aligned to the alignment of `T`.
@@ -149,7 +149,7 @@ impl<'a> PtrOwned<'a> {
     /// Consumes the pointer and supplies it into a dropper callback to be dropped.
     ///
     /// # Safety
-    /// `dropper` must *only* read or drop-in-place the pointer as whatever the actual type of the
+    /// `dropper` must *only* read or drop the pointer in-place as whatever the actual type of the
     /// pointed-to value is.
     #[inline]
     pub unsafe fn drop_with(self, dropper: unsafe fn(*mut u8)) {
@@ -193,22 +193,38 @@ impl<'a> PtrOwned<'a> {
     /// Immutably borrows the owning pointer as [`Ptr`].
     #[inline]
     pub fn as_ref(&mut self) -> Ptr {
+        // Safety: The pointer is owned, so may be borrowed.
         unsafe { Ptr::new(self.ptr) }
     }
 
     /// Mutably borrows the owning pointer as [`PtrMut`].
     #[inline]
     pub fn as_mut(&mut self) -> PtrMut {
+        // Safety: The pointer is owned, so may be borrowed.
         unsafe { PtrMut::new(self.ptr) }
     }
 }
 
+/// Represents an untyped pointer that logically mutably references the data over the lifetime `'a`.
+/// This pointer is mentally equivalent to [`&mut MaybeUninit<T>`](std::mem::MaybeUninit).
 pub struct PtrMut<'a> {
     ptr: NonNull<u8>,
     _marker: PhantomData<&'a mut u8>,
 }
 
 impl<'a> PtrMut<'a> {
+    /// Arbitrarily creates an `PtrMut` from a pointer.
+    ///
+    /// # Safety
+    /// Given `T` as the actual value type, callers must ensure the following:
+    /// - There may not be other references (including `PtrMut` and [`Ptr`]) to the given pointed-to
+    ///   value. [`PtrOwned`] is allowed only if there is only one instance, and this function is
+    ///   called from [`PtrOwned::as_mut`].
+    /// - The resulting `PtrMut` mustn't live longer than the pointed-to value; it must be consumed
+    ///   before the original value goes out of scope.
+    /// - `ptr` must point to a (maybe uninitialized) instance of `T`.
+    /// - `ptr` must be valid for both reads and writes.
+    /// - `ptr` must be properly aligned to the alignment of `T`.
     #[inline]
     pub unsafe fn new(ptr: NonNull<u8>) -> Self {
         Self {
@@ -217,37 +233,65 @@ impl<'a> PtrMut<'a> {
         }
     }
 
+    /// Claims ownership of the pointed-to value.
+    ///
+    /// # Safety
+    /// Refer to the safety guidelines mentioned in [PtrOwned::new].
     #[inline]
     pub unsafe fn own(self) -> PtrOwned<'a> {
         PtrOwned::new(self.ptr)
     }
 
-    #[inline]
-    pub unsafe fn swap<R>(&mut self, value: PtrOwned, size: usize, prev: impl FnOnce(PtrOwned) -> R) -> R {
-        let ret = prev(PtrOwned::new(self.ptr));
-        self.write(value, size);
-        ret
-    }
-
+    /// Drops the pointed-to value in-place as `T`, leaving the value in an *uninitialized* state.
+    ///
+    /// # Safety
+    /// The pointer must point to an initialized instance of `T`.
     #[inline]
     pub unsafe fn drop_in_place_as<T>(&mut self) {
         self.ptr.cast::<T>().as_ptr().drop_in_place()
     }
 
+    /// Drops the pointed-value in-place with the given drop implementation, leaving the value in an
+    /// *uninitialized* state.
+    ///
+    /// # Safety
+    /// Given `T` as the actual value type, callers must ensure the following:
+    /// - The pointer must point to an initialized instance of `T`.
+    /// - `dropper` must *only* read or drop the pointer in-place as `T`.
     #[inline]
     pub unsafe fn drop_in_place_with(&mut self, dropper: unsafe fn(*mut u8)) {
         dropper(self.ptr.as_ptr());
     }
 
+    /// Overwrites the pointed-to value with the given new value, without dropping the previous value.
+    ///
+    /// # Safety
+    /// Given `T` as the actual value type, callers must ensure the following:
+    /// - This pointer and `new_value` must point to an instance of `T`.
+    /// - `size` must be equal to [`size_of::<T>()`](std::mem::size_of).
     #[inline]
-    pub unsafe fn write(&mut self, value: PtrOwned, size: usize) {
-        self.ptr.as_ptr().copy_from_nonoverlapping(value.ptr.as_ptr(), size);
+    pub unsafe fn write(&mut self, new_value: PtrOwned, size: usize) {
+        self.ptr.as_ptr().copy_from_nonoverlapping(new_value.ptr.as_ptr(), size);
+    }
+
+    /// Swaps the pointed-to value with the given new value.
+    ///
+    /// # Safety
+    /// Given `T` as the actual value type, callers must ensure the following:
+    /// - This pointer must point to an initialized instance of `T`.
+    /// - This pointer and `new_value` must point to an instance of `T`.
+    /// - `size` must be equal to [`size_of::<T>()`](std::mem::size_of).
+    #[inline]
+    pub unsafe fn swap<R>(&mut self, new_value: PtrOwned, size: usize, prev: impl FnOnce(PtrOwned) -> R) -> R {
+        let ret = prev(PtrOwned::new(self.ptr));
+        self.write(new_value, size);
+        ret
     }
 
     /// Immutably dereferences the pointer as `&T`.
     ///
     /// # Safety
-    /// The actual type of the pointed-to value must be `T`.
+    /// This pointer must point to an initialized instance of `T`.
     #[inline]
     pub unsafe fn deref<T>(&self) -> &T {
         self.ptr.cast::<T>().as_ref()
@@ -256,7 +300,7 @@ impl<'a> PtrMut<'a> {
     /// Mutably dereferences the pointer as `&mut T`.
     ///
     /// # Safety
-    /// The actual type of the pointed-to value must be `T`.
+    /// This pointer must point to an initialized instance of `T`.
     #[inline]
     pub unsafe fn deref_mut<T>(&mut self) -> &mut T {
         self.ptr.cast::<T>().as_mut()
@@ -292,6 +336,8 @@ impl<'a, T> From<&'a mut T> for PtrMut<'a> {
     }
 }
 
+/// Represents an untyped pointer that logically immutably references the data over the lifetime `'a`.
+/// This pointer is mentally equivalent to `&T`.
 #[derive(Copy, Clone)]
 pub struct Ptr<'a> {
     ptr: NonNull<u8>,
@@ -299,6 +345,18 @@ pub struct Ptr<'a> {
 }
 
 impl<'a> Ptr<'a> {
+    /// Arbitrarily creates an `Ptr` from a pointer.
+    ///
+    /// # Safety
+    /// Given `T` as the actual value type, callers must ensure the following:
+    /// - There may not be other mutable references to the given pointed-to value. [`PtrOwned`] or
+    ///   [`PtrMut`] is allowed only if there is only one instance, and this function is called from
+    ///   [`PtrOwned::as_ref`] or [`PtrMut::as_ref`].
+    /// - The resulting `Ptr` mustn't live longer than the pointed-to value; it must be consumed
+    ///   before the original value goes out of scope.
+    /// - `ptr` must point to an initialized instance of `T`.
+    /// - `ptr` must be valid for both reads and writes.
+    /// - `ptr` must be properly aligned to the alignment of `T`.
     #[inline]
     pub unsafe fn new(ptr: NonNull<u8>) -> Self {
         Self {

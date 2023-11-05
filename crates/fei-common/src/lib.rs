@@ -43,9 +43,13 @@ use std::{
     mem,
 };
 
+/// A [`HashMap`] that uses [`FxHasher`](fxhash::FxHasher) as the hasher for performance gains.
 pub type FxHashMap<K, V> = HashMap<K, V, FxBuildHasher>;
+/// A [`HashSet`] that uses [`FxHasher`](fxhash::FxHasher) as the hasher for performance gains.
 pub type FxHashSet<T> = HashSet<T, FxBuildHasher>;
 
+/// Converts the layout of `T` into `[T; len]` while ensures the total size in bytes never exceeds
+/// [`isize::MAX`].
 pub const fn array_layout(item_layout: Layout, len: usize) -> (Layout, usize) {
     let size = item_layout.size();
     let align = item_layout.align();
@@ -69,6 +73,8 @@ pub const fn array_layout(item_layout: Layout, len: usize) -> (Layout, usize) {
     (layout, padded_size)
 }
 
+/// Returns [`None`] if dropping a value of type `T` doesn't matter, and [`Some`] value containing
+/// an untyped wrapper to [`drop_in_place`](std::ptr::drop_in_place) otherwise.
 #[inline]
 pub const fn drop_for<T>() -> Option<unsafe fn(*mut u8)> {
     #[inline]
