@@ -83,7 +83,7 @@ impl Entities {
                 });
 
                 Entity {
-                    id: self.all.len() as u32,
+                    id: self.all.len() as u32 - 1,
                     generation: 0,
                 }
             })

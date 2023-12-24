@@ -76,18 +76,25 @@ pub fn module(name: &str) -> syn::Result<Option<Path>> {
     };
 
     let manifest = get_manifest();
-    manifest
-        .get("dependencies")
-        .and_then(|deps| match deps {
-            Value::Table(deps) => search(deps).transpose(),
-            _ => unreachable!("`dependencies` is always a table"),
-        })
-        .or_else(|| manifest
-            .get("dev-dependencies")
+    if manifest.get("package").is_some_and(|package| match package {
+        Value::Table(package) => matches!(package.get("name"), Some(Value::String(value)) if value == name),
+        _ => unreachable!("`package` is always a table"),
+    }) {
+        Some(syn::parse_str("crate")).transpose()
+    } else {
+        manifest
+            .get("dependencies")
             .and_then(|deps| match deps {
                 Value::Table(deps) => search(deps).transpose(),
-                _ => unreachable!("`dev-dependencies` is always a table"),
+                _ => unreachable!("`dependencies` is always a table"),
             })
-        )
-        .transpose()
+            .or_else(|| manifest
+                .get("dev-dependencies")
+                .and_then(|deps| match deps {
+                    Value::Table(deps) => search(deps).transpose(),
+                    _ => unreachable!("`dev-dependencies` is always a table"),
+                })
+            )
+            .transpose()
+    }
 }

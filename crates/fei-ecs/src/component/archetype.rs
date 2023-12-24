@@ -119,9 +119,9 @@ impl Table {
     #[inline]
     pub unsafe fn update(&mut self, index: usize, set: PtrOwned, set_info: &ComponentSetInfo) {
         for &id in &*set_info.components {
-            self.columns
-                .get_unchecked_mut(id)
-                .set_unchecked(index, ptr::read(&set).byte_add(*set_info.component_offsets.get_unchecked(id)))
+            if let Some(column) = self.columns.get_mut(id) {
+                column.set_unchecked(index, ptr::read(&set).byte_add(*set_info.component_offsets.get_unchecked(id)))
+            }
         }
     }
 
@@ -135,15 +135,17 @@ impl Table {
         let entity = from.entities.swap_remove(from_index);
         self.entities.push(entity);
 
-        for &id in &*from.components {
-            let from = from.columns.get_unchecked_mut(id);
+        for &id in &*self.components {
             let to = self.columns.get_unchecked_mut(id);
-
-            if let Some(&offset) = set_info.component_offsets.get(id) {
-                from.swap_remove_unchecked_and_drop(from_index);
-                to.push(ptr::read(&set).byte_add(offset));
+            if let Some(from) = from.columns.get_mut(id) {
+                if let Some(&offset) = set_info.component_offsets.get(id) {
+                    from.swap_remove_unchecked_and_drop(from_index);
+                    to.push(ptr::read(&set).byte_add(offset));
+                } else {
+                    from.swap_remove_unchecked(from_index, |ptr| to.push(ptr));
+                }
             } else {
-                from.swap_remove_unchecked(from_index, |ptr| to.push(ptr));
+                to.push(ptr::read(&set).byte_add(*set_info.component_offsets.get_unchecked(id)));
             }
         }
 
@@ -155,9 +157,20 @@ impl Table {
     pub unsafe fn remove_from(
         &mut self,
         from: &mut Self, from_index: usize,
-        set_info: &ComponentSetInfo,
     ) -> (Option<Entity>, usize) {
+        let entity = from.entities.swap_remove(from_index);
+        self.entities.push(entity);
 
+        for &id in &*from.components {
+            let from = from.columns.get_unchecked_mut(id);
+            if let Some(to) = self.columns.get_mut(id) {
+                from.swap_remove_unchecked(from_index, |ptr| to.push(ptr));
+            } else {
+                from.swap_remove_unchecked_and_drop(from_index);
+            }
+        }
+
+        (from.entities.get(from_index).copied(), self.entities.len() - 1)
     }
 
     #[inline]

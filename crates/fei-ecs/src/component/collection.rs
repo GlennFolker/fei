@@ -214,19 +214,23 @@ impl Components {
                 let [from_arch, to_arch] = self.archetypes.many_unchecked_mut([from_id.0, to_id.0]);
                 if let Some(to_table_id) = to_arch.table_id {
                     if let Some(from_table_id) = from_arch.table_id {
-                        let [from_table, to_table] = self.tables.many_unchecked_mut([from_table_id.0, to_table_id.0]);
-                        let from_index = loc.table_index.unwrap_unchecked();
+                        if from_table_id != to_table_id {
+                            let [from_table, to_table] = self.tables.many_unchecked_mut([from_table_id.0, to_table_id.0]);
+                            let from_index = loc.table_index.unwrap_unchecked();
 
-                        let (swapped, table_index) = to_table.insert_from(
-                            from_table, from_index,
-                            set, set_info,
-                        );
+                            let (swapped, table_index) = to_table.insert_from(
+                                from_table, from_index,
+                                set, set_info,
+                            );
 
-                        loc.table_index = Some(table_index);
-
-                        if let Some(swapped) = swapped {
-                            let loc = entities.location_mut(swapped).as_mut().unwrap_unchecked();
-                            loc.table_index = Some(from_index);
+                            loc.table_index = Some(table_index);
+                            if let Some(swapped) = swapped {
+                                let swapped_loc = entities.location_mut(swapped).as_mut().unwrap_unchecked();
+                                swapped_loc.table_index = Some(from_index);
+                            }
+                        } else {
+                            let table = self.tables.get_unchecked_mut(to_table_id.0);
+                            table.update(loc.table_index.unwrap_unchecked(), set, set_info);
                         }
                     } else {
                         let table = self.tables.get_unchecked_mut(to_table_id.0);
@@ -242,17 +246,17 @@ impl Components {
             }
         } else {
             let arch = self.archetypes.get_unchecked_mut(to_id.0);
-            let mut loc = EntityLocation {
+            let mut new_loc = EntityLocation {
                 archetype_id: to_id,
                 table_index: None,
             };
 
             if let Some(table_id) = arch.table_id {
                 let table = self.tables.get_unchecked_mut(table_id.0);
-                loc.table_index = Some(table.insert(entity, set, set_info));
+                new_loc.table_index = Some(table.insert(entity, set, set_info));
             }
 
-            *location = Some(loc);
+            *location = Some(new_loc);
         }
     }
 
@@ -260,101 +264,86 @@ impl Components {
         let location = entities.location_mut(entity);
         let set_info = self.component_set_info.get_unchecked(set_id.0);
 
-        if let Some(location) = location.as_mut() {
-            let (from_id, to_id) = {
-                let arch_id = location.archetype_id;
-                let arch = self.archetypes.get_unchecked_mut(arch_id.0);
+        let Some(loc) = location.as_mut() else { return };
+        let (from_id, to_id) = {
+            let arch_id = loc.archetype_id;
+            let arch = self.archetypes.get_unchecked_mut(arch_id.0);
 
-                if let Some(&target_id) = arch.removals.get(set_id) {
-                    (arch_id, target_id)
-                } else {
-                    if arch.component_bits.is_subset(&set_info.component_bits) {
-                        arch.removals.insert(set_id, None);
-                        (arch_id, None)
-                    } else if arch.component_bits.is_disjoint(&set_info.component_bits) {
-                        arch.removals.insert(set_id, Some(arch_id));
-                        (arch_id, Some(arch_id))
-                    } else {
-                        let mut component_bits = arch.component_bits.clone();
-                        component_bits.difference_with(&set_info.component_bits);
-                        let key = component_bits
-                            .ones().fold(Vec::with_capacity(component_bits.count_ones(..)), |mut accum, id| {
-                                accum.push(ComponentId(id));
-                                accum
-                            });
-
-                        let target_id = Self::get_archetype(
-                            &mut self.tables, &mut self.table_ids,
-                            &mut self.archetypes, &mut self.archetype_keys,
-                            &self.component_info,
-                            Cow::Owned(key), Cow::Owned(component_bits),
-                        );
-
-                        self.archetypes.get_unchecked_mut(arch_id.0).removals.insert(set_id, Some(target_id));
-                        (arch_id, Some(target_id))
-                    }
-                }
-            };
-
-            self.sparse_sets.remove(entity, set_info);
-            self.bitsets.remove(entity, set_info);
-            if let Some(to_id) = to_id {
-
+            if let Some(&target_id) = arch.removals.get(set_id) {
+                (arch_id, target_id)
             } else {
+                if arch.component_bits.is_subset(&set_info.component_bits) {
+                    arch.removals.insert(set_id, None);
+                    (arch_id, None)
+                } else if arch.component_bits.is_disjoint(&set_info.component_bits) {
+                    arch.removals.insert(set_id, Some(arch_id));
+                    (arch_id, Some(arch_id))
+                } else {
+                    let mut component_bits = arch.component_bits.clone();
+                    component_bits.difference_with(&set_info.component_bits);
+                    let key = component_bits
+                        .ones().fold(Vec::with_capacity(component_bits.count_ones(..)), |mut accum, id| {
+                            accum.push(ComponentId(id));
+                            accum
+                        });
 
+                    let target_id = Self::get_archetype(
+                        &mut self.tables, &mut self.table_ids,
+                        &mut self.archetypes, &mut self.archetype_keys,
+                        &self.component_info,
+                        Cow::Owned(key), Cow::Owned(component_bits),
+                    );
+
+                    self.archetypes.get_unchecked_mut(arch_id.0).removals.insert(set_id, Some(target_id));
+                    (arch_id, Some(target_id))
+                }
             }
-        }
+        };
 
-        /*
-        if let Some(from_id) = from_id {
-            let loc = location.as_mut().unwrap_unchecked();
+        self.sparse_sets.remove(entity, set_info);
+        self.bitsets.remove(entity, set_info);
+        if let Some(to_id) = to_id {
             loc.archetype_id = to_id;
-
             if from_id != to_id {
                 let [from_arch, to_arch] = self.archetypes.many_unchecked_mut([from_id.0, to_id.0]);
-                if let Some(to_table_id) = to_arch.table_id {
-                    if let Some(from_table_id) = from_arch.table_id {
-                        let [from_table, to_table] = self.tables.many_unchecked_mut([from_table_id.0, to_table_id.0]);
-                        let from_index = loc.table_index.unwrap_unchecked();
+                if let Some(from_table_id) = from_arch.table_id {
+                    let from_index = loc.table_index.unwrap_unchecked();
+                    if let Some(to_table_id) = to_arch.table_id {
+                        if from_table_id != to_table_id {
+                            let [from_table, to_table] = self.tables.many_unchecked_mut([from_table_id.0, to_table_id.0]);
+                            let (swapped, table_index) = to_table.remove_from(
+                                from_table, from_index,
+                            );
 
-                        let (swapped, table_index) = to_table.migrate(
-                            from_table, from_index,
-                            set, set_info,
-                        );
-
-                        loc.table_index = Some(table_index);
-
-                        if let Some(swapped) = swapped {
-                            let loc = entities.location_mut(swapped).as_mut().unwrap_unchecked();
-                            loc.table_index = Some(from_index);
+                            loc.table_index = Some(table_index);
+                            if let Some(swapped) = swapped {
+                                let swapped_loc = entities.location_mut(swapped).as_mut().unwrap_unchecked();
+                                swapped_loc.table_index = Some(from_index);
+                            }
                         }
                     } else {
-                        let table = self.tables.get_unchecked_mut(to_table_id.0);
-                        loc.table_index = Some(table.insert(entity, set, set_info));
+                        loc.table_index = None;
+
+                        let table = self.tables.get_unchecked_mut(from_table_id.0);
+                        if let Some(swapped) = table.remove(from_index) {
+                            let swapped_loc = entities.location_mut(swapped).as_mut().unwrap_unchecked();
+                            swapped_loc.table_index = Some(from_index);
+                        }
                     }
-                }
-            } else {
-                let arch = self.archetypes.get_unchecked_mut(from_id.0);
-                if let Some(table_id) = arch.table_id {
-                    let table = self.tables.get_unchecked_mut(table_id.0);
-                    table.update(loc.table_index.unwrap_unchecked(), set, set_info);
                 }
             }
         } else {
-            let arch = self.archetypes.get_unchecked_mut(to_id.0);
-            let mut loc = EntityLocation {
-                archetype_id: to_id,
-                table_index: None,
-            };
-
+            let loc = location.take().unwrap_unchecked();
+            let arch = self.archetypes.get_unchecked_mut(from_id.0);
             if let Some(table_id) = arch.table_id {
                 let table = self.tables.get_unchecked_mut(table_id.0);
-                loc.table_index = Some(table.insert(entity, set, set_info));
+                let index = loc.table_index.unwrap_unchecked();
+                if let Some(swapped) = table.remove(index) {
+                    let swapped_loc = entities.location_mut(swapped).as_mut().unwrap_unchecked();
+                    swapped_loc.table_index = Some(index);
+                }
             }
-
-            *location = Some(loc);
         }
-         */
     }
 
     unsafe fn get_archetype(
@@ -392,5 +381,63 @@ impl Components {
             Cow::Borrowed(key) => archetype_keys.entry_ref(key).or_insert_with_key(closure),
             Cow::Owned(key) => archetype_keys.entry(key.into_boxed_slice()).or_insert_with_key(|key| closure(key)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fei_ecs_macros::Component;
+
+    #[derive(Component)]
+    #[component(storage = "Table")]
+    struct TableStored(String);
+    impl Drop for TableStored {
+        #[inline]
+        fn drop(&mut self) {
+            println!("Dropped {:?}: {}", Self::STORAGE, self.0);
+        }
+    }
+
+    #[derive(Component)]
+    #[component(storage = "SparseSet")]
+    struct SetStored(f32);
+    impl Drop for SetStored {
+        #[inline]
+        fn drop(&mut self) {
+            println!("Dropped {:?}: {}", Self::STORAGE, self.0);
+        }
+    }
+
+    #[derive(Component)]
+    pub struct BitStored;
+    impl Drop for BitStored {
+        #[inline]
+        fn drop(&mut self) {
+            println!("Dropped {:?}", Self::STORAGE);
+        }
+    }
+
+    #[test]
+    fn soundness() -> anyhow::Result<()> {
+        let mut components = Components::default();
+        let tabs_id = components.register_component_set::<TableStored>();
+        let sets_id = components.register_component_set::<SetStored>();
+        let bits_id = components.register_component_set::<BitStored>();
+
+        let mut entities = Entities::default();
+        let a = entities.spawn()?;
+        let b = entities.spawn()?;
+
+        unsafe {
+            PtrOwned::take(TableStored("fei".to_string()), |ptr| components.insert(a, &mut entities, ptr, tabs_id));
+            PtrOwned::take(TableStored("is".to_string()), |ptr| components.insert(a, &mut entities, ptr, tabs_id));
+            PtrOwned::take(TableStored("short".to_string()), |ptr| components.insert(a, &mut entities, ptr, tabs_id));
+
+            PtrOwned::take(SetStored(f32::EPSILON), |ptr| components.insert(a, &mut entities, ptr, sets_id));
+        }
+
+        println!("Dropping components.");
+        Ok(())
     }
 }
