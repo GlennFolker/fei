@@ -12,6 +12,9 @@ pub mod sparse_set;
 
 pub mod ptr;
 
+mod ext;
+pub use ext::*;
+
 pub mod prelude {
     pub use fei_common_macros::{
         self,
@@ -23,6 +26,7 @@ pub mod prelude {
     pub use fxhash;
     pub use hashbrown;
     pub use parking_lot;
+    pub use thiserror::Error;
 
     pub use super::{
         dyn_sparse_set::DynSparseSet,
@@ -30,6 +34,7 @@ pub mod prelude {
         sparse_set::{
             SparseSet, SparseIndex,
         },
+        SliceExt,
         FxHashMap, FxHashSet,
     };
 }

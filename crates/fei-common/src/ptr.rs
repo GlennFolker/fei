@@ -161,7 +161,7 @@ impl<'a> PtrOwned<'a> {
     /// # Safety
     /// The actual type of the pointed-to value must be `T`.
     #[inline]
-    pub unsafe fn deref<T>(&self) -> &T {
+    pub unsafe fn deref<T>(&self) -> &'a T {
         self.ptr.cast::<T>().as_ref()
     }
 
@@ -170,7 +170,7 @@ impl<'a> PtrOwned<'a> {
     /// # Safety
     /// The actual type of the pointed-to value must be `T`.
     #[inline]
-    pub unsafe fn deref_mut<T>(&mut self) -> &mut T {
+    pub unsafe fn deref_mut<T>(&mut self) -> &'a mut T {
         self.ptr.cast::<T>().as_mut()
     }
 
@@ -293,7 +293,7 @@ impl<'a> PtrMut<'a> {
     /// # Safety
     /// This pointer must point to an initialized instance of `T`.
     #[inline]
-    pub unsafe fn deref<T>(&self) -> &T {
+    pub unsafe fn deref<T>(&self) -> &'a T {
         self.ptr.cast::<T>().as_ref()
     }
 
@@ -302,7 +302,7 @@ impl<'a> PtrMut<'a> {
     /// # Safety
     /// This pointer must point to an initialized instance of `T`.
     #[inline]
-    pub unsafe fn deref_mut<T>(&mut self) -> &mut T {
+    pub unsafe fn deref_mut<T>(&mut self) -> &'a mut T {
         self.ptr.cast::<T>().as_mut()
     }
 
@@ -370,7 +370,7 @@ impl<'a> Ptr<'a> {
     /// # Safety
     /// The actual type of the pointed-to value must be `T`.
     #[inline]
-    pub unsafe fn deref<T>(&self) -> &T {
+    pub unsafe fn deref<T>(&self) -> &'a T {
         self.ptr.cast::<T>().as_ref()
     }
 

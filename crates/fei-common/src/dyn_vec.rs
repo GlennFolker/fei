@@ -26,7 +26,7 @@ use std::{
 ///     ptr::PtrOwned,
 /// };
 ///
-/// #[derive(Copy, Clone, Eq, PartialEq)]
+/// #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 /// struct Data(u32);
 ///
 /// let mut vec = DynVec::typed::<Data>();
@@ -59,7 +59,7 @@ use std::{
 /// unsafe {
 ///     assert_eq!(vec.get(0).unwrap().deref::<Data>(), &Data(314));
 ///     assert_eq!(vec.get_mut(1).unwrap().deref_mut::<Data>(), &mut Data(159));
-///     assert_eq!(vec.get(2), None);
+///     assert!(vec.get(2).is_none());
 /// }
 ///
 /// // Clear the vector.
@@ -108,9 +108,25 @@ pub enum DynVecDrop {
 }
 
 impl DynVecDrop {
+    #[inline]
+    pub const fn automatic<T>() -> Self {
+        match drop_for::<T>() {
+            None => Self::None,
+            Some(dropper) => Self::Automatic(dropper),
+        }
+    }
+
+    #[inline]
+    pub const fn manual<T>() -> Self {
+        match drop_for::<T>() {
+            None => Self::None,
+            Some(dropper) => Self::Manual(dropper),
+        }
+    }
+
     /// Converts [`Automatic`](DynVecDrop::Automatic) to [`Manual`](DynVecDrop::Manual).
     #[inline]
-    pub fn into_manual(self) -> Self {
+    pub const fn into_manual(self) -> Self {
         let Self::Automatic(dropper) = self else {
             return self;
         };
@@ -119,7 +135,7 @@ impl DynVecDrop {
 
     /// Converts [`Manual`](DynVecDrop::Manual) to [`Automatic`](DynVecDrop::Automatic).
     #[inline]
-    pub fn into_automatic(self) -> Self {
+    pub const fn into_automatic(self) -> Self {
         let Self::Manual(dropper) = self else {
             return self;
         };
@@ -176,11 +192,7 @@ impl DynVec {
     /// pre-allocating the buffer.
     #[inline]
     pub const fn typed<T>() -> Self {
-        // Safety: `drop_for` will always return a sound drop implementation.
-        unsafe { Self::new(Layout::new::<T>(), match drop_for::<T>() {
-            Some(dropper) => DynVecDrop::Automatic(dropper),
-            None => DynVecDrop::None,
-        }) }
+        unsafe { Self::new(Layout::new::<T>(), DynVecDrop::automatic::<T>()) }
     }
 
     /// Safely constructs a new [`DynVec`] containing `T` with automatic dropping that pre-allocates
@@ -249,7 +261,11 @@ impl DynVec {
     /// Returns an untyped immutable pointer to the item at `index`, with bounds-checking.
     #[inline]
     pub fn get(&self, index: usize) -> Option<Ptr> {
-        (index < self.len).then(|| unsafe { self.get_unchecked(index) })
+        if index < self.len {
+            Some(unsafe { self.get_unchecked(index) })
+        } else {
+            None
+        }
     }
 
     /// Returns an untyped immutable pointer to the item at `index`, without bounds-checking.
@@ -265,7 +281,11 @@ impl DynVec {
     /// Returns an untyped mutable pointer to the item at `index`, with bounds-checking.
     #[inline]
     pub fn get_mut(&mut self, index: usize) -> Option<PtrMut> {
-        (index < self.len).then(|| unsafe { self.get_unchecked_mut(index) })
+        if index < self.len {
+            Some(unsafe { self.get_unchecked_mut(index) })
+        } else {
+            None
+        }
     }
 
     /// Returns an untyped mutable pointer to the item at `index`, without bounds-checking.
@@ -276,6 +296,33 @@ impl DynVec {
     pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> PtrMut {
         debug_assert!(index < self.len);
         PtrMut::new(NonNull::new_unchecked(self.array.as_ptr().add(index * self.array_stride)))
+    }
+
+    /// Sets the item at `index` and drops the previous item, with bounds-checking.
+    #[inline]
+    pub unsafe fn set<'a>(&mut self, index: usize, value: PtrOwned<'a>) -> Result<(), PtrOwned<'a>> {
+        if index < self.len {
+            Ok(self.set_unchecked(index, value))
+        } else {
+            Err(value)
+        }
+    }
+
+    /// Sets the item at `index` and drops the previous item, without bounds-checking.
+    ///
+    /// # Safety
+    /// - `index` must be lesser than [`len`](DynVec::len).
+    /// - `value` must contain the same data type as the vector contains.
+    #[inline]
+    pub unsafe fn set_unchecked(&mut self, index: usize, value: PtrOwned) {
+        debug_assert!(index < self.len);
+
+        let size = self.layout.size();
+        let dropper = self.dropper;
+        self.get_unchecked_mut(index)
+            .swap(value, size, |prev| if let DynVecDrop::Automatic(dropper) = dropper {
+                prev.drop_with(dropper)
+            });
     }
 
     /// Swaps an item at `index` with `value`, with bounds-checking.
@@ -338,7 +385,11 @@ impl DynVec {
     /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn remove<R>(&mut self, index: usize, removed: impl FnOnce(PtrOwned) -> R) -> Option<R> {
-        (index < self.len).then(|| self.remove_unchecked(index, removed))
+        if index < self.len {
+            Some(self.remove_unchecked(index, removed))
+        } else {
+            None
+        }
     }
 
     /// Removes an item at `index` and shifts the rest of the items to fill the empty space.
@@ -363,19 +414,19 @@ impl DynVec {
     }
 
     /// Removes an item at `index` and moves the last item to `index` to fill the empty space, if any.
-    ///
-    /// # Safety
-    /// - `value` must contain the same data type as the vector contains.
     #[inline]
-    pub unsafe fn swap_remove<R>(&mut self, index: usize, removed: impl FnOnce(PtrOwned) -> R) -> Option<R> {
-        (index < self.len).then(|| self.swap_remove_unchecked(index, removed))
+    pub fn swap_remove<R>(&mut self, index: usize, removed: impl FnOnce(PtrOwned) -> R) -> Option<R> {
+        if index < self.len {
+            Some(unsafe { self.swap_remove_unchecked(index, removed) })
+        } else {
+            None
+        }
     }
 
     /// Removes an item at `index` and moves the last item to `index` to fill the empty space, if any.
     ///
     /// # Safety
     /// - `index` must be lesser than [`len`](DynVec::len).
-    /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn swap_remove_unchecked<R>(&mut self, index: usize, removed: impl FnOnce(PtrOwned) -> R) -> R {
         let ret = removed(self.get_unchecked_mut(index).own());
@@ -392,6 +443,26 @@ impl DynVec {
         ret
     }
 
+    /// Drops an item at `index` and moves the last item to `index` to fill the empty space, if any.
+    #[inline]
+    pub fn swap_remove_and_drop(&mut self, index: usize) {
+        if index < self.len {
+            unsafe { self.swap_remove_unchecked_and_drop(index) }
+        }
+    }
+
+    /// Drops an item at `index` and moves the last item to `index` to fill the empty space, if any.
+    ///
+    /// # Safety
+    /// - `index` must be lesser than [`len`](DynVec::len).
+    #[inline]
+    pub unsafe fn swap_remove_unchecked_and_drop(&mut self, index: usize) {
+        let dropper = self.dropper;
+        self.swap_remove_unchecked(index, |ptr| if let DynVecDrop::Automatic(dropper) = dropper {
+            ptr.drop_with(dropper);
+        });
+    }
+
     /// Pushes an item to the back of the vector.
     ///
     /// # Safety
@@ -400,16 +471,19 @@ impl DynVec {
     pub unsafe fn push(&mut self, value: PtrOwned) {
         let size = self.layout.size();
         self.reserve(1);
-        self.get_unchecked_mut(self.len).write(value, size);
         self.len += 1;
+        self.get_unchecked_mut(self.len - 1).write(value, size);
     }
 
     /// Pops an item from the back of the vector, with bounds-checking. Note that while the function
     /// itself is safe, using the owning pointer passed to `popped` is unsafe.
     #[inline]
     pub fn pop<R>(&mut self, popped: impl FnOnce(PtrOwned) -> R) -> Option<R> {
-        // Safety: Bounds-checking is done.
-        (self.len > 0).then(|| unsafe { self.pop_unchecked(popped) })
+        if self.len > 0 {
+            Some(unsafe { self.pop_unchecked(popped) })
+        } else {
+            None
+        }
     }
 
     /// Pops an item from the back of the vector, without bounds-checking. Note that while the function

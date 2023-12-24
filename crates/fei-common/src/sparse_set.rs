@@ -58,6 +58,16 @@ impl<I: SparseIndex, T> SparseSet<I, T> {
     }
 
     #[inline]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            dense: FixedBitSet::with_capacity(capacity),
+            sparse: Vec::with_capacity(capacity),
+            len: 0,
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
@@ -233,7 +243,7 @@ impl<I: SparseIndex, T> IntoIterator for SparseSet<I, T> {
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         let this = ManuallyDrop::new(self);
-        // Safety: References are always valid for reads, initialized, and aligned.
+        // Safety: References are always valid for reads.
         let (dense, sparse) = unsafe { (ptr::read(&this.dense), ptr::read(&this.sparse)) };
 
         IterOwned {
@@ -242,6 +252,26 @@ impl<I: SparseIndex, T> IntoIterator for SparseSet<I, T> {
             sparse,
             _marker: PhantomData,
         }
+    }
+}
+
+impl<'a, I: SparseIndex, T> IntoIterator for &'a SparseSet<I, T> {
+    type Item = (I, &'a T);
+    type IntoIter = Iter<'a, I, T>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, I: SparseIndex, T> IntoIterator for &'a mut SparseSet<I, T> {
+    type Item = (I, &'a mut T);
+    type IntoIter = IterMut<'a, I, T>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
     }
 }
 
@@ -271,7 +301,7 @@ impl<I: SparseIndex, T: Clone> Clone for SparseSet<I, T> {
     }
 }
 
-impl<I: SparseIndex, T: Default> Default for SparseSet<I, T> {
+impl<I: SparseIndex, T> Default for SparseSet<I, T> {
     #[inline]
     fn default() -> Self {
         Self::new()

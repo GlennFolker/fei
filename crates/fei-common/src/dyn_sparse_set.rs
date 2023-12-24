@@ -72,7 +72,15 @@ impl<I: SparseIndex> DynSparseSet<I> {
         }
     }
 
-    pub unsafe fn remove<R>(&mut self, index: I, removed: impl FnOnce(PtrOwned) -> R) -> Option<R> {
+    #[inline]
+    pub unsafe fn insert_and_drop(&mut self, index: I, value: PtrOwned) {
+        let dropper = self.sparse.dropper();
+        self.insert(index, value, |prev| if let DynVecDrop::Manual(dropper) = dropper {
+            prev.drop_with(dropper)
+        });
+    }
+
+    pub fn remove<R>(&mut self, index: I, removed: impl FnOnce(PtrOwned) -> R) -> Option<R> {
         let index = index.into_index();
         self.dense.contains(index)
             .then(|| {
@@ -80,8 +88,16 @@ impl<I: SparseIndex> DynSparseSet<I> {
                 self.dense.set(index, false);
 
                 // Safety: If the key exists, then the value exists and is initialized.
-                removed(self.sparse.get_unchecked_mut(index).own())
+                removed(unsafe { self.sparse.get_unchecked_mut(index).own() })
             })
+    }
+
+    #[inline]
+    pub fn remove_and_drop(&mut self, index: I) {
+        let dropper = self.sparse.dropper();
+        self.remove(index, |prev| if let DynVecDrop::Manual(dropper) = dropper {
+            unsafe { prev.drop_with(dropper) }
+        });
     }
 
     #[inline]
