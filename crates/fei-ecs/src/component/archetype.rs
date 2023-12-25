@@ -12,10 +12,16 @@ use crate::{
     entity::Entity,
 };
 use fixedbitset::FixedBitSet;
-use std::ptr;
+use std::ptr::{
+    self,
+    NonNull,
+};
 
 pub(super) struct Archetype {
     pub component_bits: FixedBitSet,
+    pub sparse_set_components: Box<[ComponentId]>,
+    pub zst_components: Box<[ComponentId]>,
+
     pub table_id: Option<TableId>,
 
     /// Always has a target ID: same ID as self if the inserter is a subset, new ID otherwise.
@@ -31,15 +37,25 @@ impl Archetype {
         components: &[ComponentId], mut get_info: impl FnMut(ComponentId) -> ComponentInfo,
         mut get_table: impl FnMut(&[ComponentId]) -> TableId,
     ) -> Self {
-        let table_components = components
-            .iter().filter(|&&id| get_info(id).storage() == Some(ComponentStorage::Table))
-            .fold(Vec::new(), |mut accum, &id| {
-                accum.push(id);
-                accum
-            });
+        let (table_components, sparse_set_components, zst_components) = components.iter().fold(
+            (Vec::new(), Vec::new(), Vec::new()),
+            |(mut table_components, mut sparse_set_components, mut zst_components), &id| {
+                let info = get_info(id);
+                match info.storage() {
+                    Some(ComponentStorage::Table) => &mut table_components,
+                    Some(ComponentStorage::SparseSet) => &mut sparse_set_components,
+                    None => &mut zst_components,
+                }.push(id);
+
+                (table_components, sparse_set_components, zst_components)
+            },
+        );
 
         Self {
             component_bits,
+            sparse_set_components: sparse_set_components.into_boxed_slice(),
+            zst_components: zst_components.into_boxed_slice(),
+
             table_id: (!table_components.is_empty()).then(|| get_table(&table_components)),
 
             insertions: SparseSet::new(),
@@ -236,9 +252,9 @@ impl SparseSets {
     }
 
     #[inline]
-    pub unsafe fn remove(&mut self, entity: Entity, set_info: &ComponentSetInfo) {
+    pub unsafe fn remove(&mut self, entity: Entity, components: &[ComponentId]) {
         let index = entity.id();
-        for &id in &*set_info.sparse_set_components {
+        for &id in components {
             self.sets
                 .get_unchecked_mut(id)
                 .remove_and_drop(index);
@@ -247,38 +263,59 @@ impl SparseSets {
 }
 
 #[derive(Default)]
-pub(super) struct Bitsets {
-    sets: SparseSet<ComponentId, FixedBitSet>,
+pub(super) struct Bitset {
+    sets: SparseSet<ComponentId, (FixedBitSet, Option<unsafe fn(*mut u8)>)>,
 }
 
-impl Bitsets {
+impl Bitset {
     #[inline]
-    pub fn init(&mut self, id: ComponentId) {
-        self.sets.insert(id, FixedBitSet::new());
+    pub fn init(&mut self, id: ComponentId, dropper: Option<unsafe fn(*mut u8)>) {
+        self.sets.insert(id, (FixedBitSet::new(), dropper));
     }
 
     #[inline]
     pub unsafe fn contains(&self, entity: Entity, id: ComponentId) -> bool {
-        self.sets.get_unchecked(id).contains(entity.id() as usize)
+        self.sets.get_unchecked(id).0.contains(entity.id() as usize)
     }
 
     #[inline]
     pub unsafe fn insert(&mut self, entity: Entity, set_info: &ComponentSetInfo) {
         let index = entity.id() as usize;
         for &id in &*set_info.zst_components {
-            let set = self.sets.get_unchecked_mut(id);
+            let (set, dropper) = self.sets.get_unchecked_mut(id);
             set.grow(index + 1);
-            set.insert(index);
+
+            if set.put(index) {
+                if let Some(dropper) = *dropper {
+                    dropper(NonNull::<()>::dangling().cast::<u8>().as_ptr());
+                }
+            }
         }
     }
 
     #[inline]
-    pub unsafe fn remove(&mut self, entity: Entity, set_info: &ComponentSetInfo) {
+    pub unsafe fn remove(&mut self, entity: Entity, components: &[ComponentId]) {
         let index = entity.id() as usize;
-        for &id in &*set_info.zst_components {
-            let set = self.sets.get_unchecked_mut(id);
+        for &id in components {
+            let (set, dropper) = self.sets.get_unchecked_mut(id);
             if set.contains(index) {
                 set.set(index, false);
+                if let Some(dropper) = *dropper {
+                    dropper(NonNull::<()>::dangling().cast::<u8>().as_ptr());
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Bitset {
+    #[inline]
+    fn drop(&mut self) {
+        for (set, dropper) in self.sets.iter_sparse() {
+            if let Some(dropper) = dropper {
+                for _ in 0..set.count_ones(..) {
+                    unsafe { dropper(NonNull::<()>::dangling().cast::<u8>().as_ptr()) };
+                }
             }
         }
     }

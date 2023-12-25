@@ -11,7 +11,7 @@ use crate::{
     component::{
         Component, ComponentId, ComponentInfo, ComponentStorage,
         ComponentSet, ComponentSetId, ComponentSetInfo,
-        Archetype, ArchetypeId, Table, TableId, Bitsets, SparseSets,
+        Archetype, ArchetypeId, Table, TableId, Bitset, SparseSets,
     },
 };
 use fixedbitset::FixedBitSet;
@@ -27,7 +27,7 @@ use std::{
 /// Component storages, identified by [`Entity`]s.
 #[derive(Default)]
 pub struct Components {
-    bitsets: Bitsets,
+    bitsets: Bitset,
     sparse_sets: SparseSets,
 
     tables: Vec<Table>,
@@ -65,7 +65,7 @@ impl Components {
     }
 
     unsafe fn register_component_impl(
-        bitsets: &mut Bitsets,
+        bitsets: &mut Bitset,
         sparse_sets: &mut SparseSets,
         component_info: &mut Vec<ComponentInfo>,
         component_ids: &mut FxHashMap<TypeId, ComponentId>,
@@ -79,7 +79,7 @@ impl Components {
             if let Some(ComponentStorage::SparseSet) = info.storage() {
                 sparse_sets.init(id, info);
             } else {
-                bitsets.init(id);
+                bitsets.init(id, info.dropper());
             }
 
             id
@@ -260,7 +260,7 @@ impl Components {
         }
     }
 
-    pub unsafe fn remove_all(&mut self, entity: Entity, entities: &mut Entities, set_id: ComponentSetId) {
+    pub unsafe fn remove_set(&mut self, entity: Entity, entities: &mut Entities, set_id: ComponentSetId) {
         let location = entities.location_mut(entity);
         let set_info = self.component_set_info.get_unchecked(set_id.0);
 
@@ -300,8 +300,8 @@ impl Components {
             }
         };
 
-        self.sparse_sets.remove(entity, set_info);
-        self.bitsets.remove(entity, set_info);
+        self.sparse_sets.remove(entity, &set_info.sparse_set_components);
+        self.bitsets.remove(entity, &set_info.zst_components);
         if let Some(to_id) = to_id {
             loc.archetype_id = to_id;
             if from_id != to_id {
@@ -342,6 +342,23 @@ impl Components {
                     let swapped_loc = entities.location_mut(swapped).as_mut().unwrap_unchecked();
                     swapped_loc.table_index = Some(index);
                 }
+            }
+        }
+    }
+
+    pub unsafe fn remove_all(&mut self, entity: Entity, entities: &mut Entities) {
+        let Some(loc) = entities.location_mut(entity).take() else { return };
+        let arch = self.archetypes.get_unchecked(loc.archetype_id.0);
+
+        self.sparse_sets.remove(entity, &arch.sparse_set_components);
+        self.bitsets.remove(entity, &arch.zst_components);
+        if let Some(table_id) = arch.table_id {
+            let table = self.tables.get_unchecked_mut(table_id.0);
+            let index = loc.table_index.unwrap_unchecked();
+
+            if let Some(swapped) = table.remove(index) {
+                let swapped_loc = entities.location_mut(swapped).as_mut().unwrap_unchecked();
+                swapped_loc.table_index = Some(index);
             }
         }
     }
@@ -387,7 +404,9 @@ impl Components {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fei_ecs_macros::Component;
+    use fei_ecs_macros::{
+        Component, ComponentSet,
+    };
 
     #[derive(Component)]
     #[component(storage = "Table")]
@@ -395,7 +414,7 @@ mod tests {
     impl Drop for TableStored {
         #[inline]
         fn drop(&mut self) {
-            println!("Dropped {:?}: {}", Self::STORAGE, self.0);
+            println!("Dropped `{:?}`: {}", Self::STORAGE, self.0);
         }
     }
 
@@ -405,7 +424,7 @@ mod tests {
     impl Drop for SetStored {
         #[inline]
         fn drop(&mut self) {
-            println!("Dropped {:?}: {}", Self::STORAGE, self.0);
+            println!("Dropped `{:?}`: {}", Self::STORAGE, self.0);
         }
     }
 
@@ -414,30 +433,54 @@ mod tests {
     impl Drop for BitStored {
         #[inline]
         fn drop(&mut self) {
-            println!("Dropped {:?}", Self::STORAGE);
+            println!("Dropped `BitSet`");
         }
     }
 
+    #[derive(ComponentSet)]
+    pub struct AllSet {
+        table: TableStored,
+        set: SetStored,
+        bit: BitStored,
+    }
+
     #[test]
-    fn soundness() -> anyhow::Result<()> {
+    fn insert_remove() -> anyhow::Result<()> {
         let mut components = Components::default();
         let tabs_id = components.register_component_set::<TableStored>();
         let sets_id = components.register_component_set::<SetStored>();
         let bits_id = components.register_component_set::<BitStored>();
+        let all_id = components.register_component_set::<AllSet>();
 
         let mut entities = Entities::default();
         let a = entities.spawn()?;
         let b = entities.spawn()?;
 
         unsafe {
+            println!("===> Insert table/'fei' to A");
             PtrOwned::take(TableStored("fei".to_string()), |ptr| components.insert(a, &mut entities, ptr, tabs_id));
+            println!("===> Insert table/'is' to A");
             PtrOwned::take(TableStored("is".to_string()), |ptr| components.insert(a, &mut entities, ptr, tabs_id));
+            println!("===> Insert table/'short' to A");
             PtrOwned::take(TableStored("short".to_string()), |ptr| components.insert(a, &mut entities, ptr, tabs_id));
 
-            PtrOwned::take(SetStored(f32::EPSILON), |ptr| components.insert(a, &mut entities, ptr, sets_id));
+            println!("===> Insert set/6.942 to A");
+            PtrOwned::take(SetStored(6.942), |ptr| components.insert(a, &mut entities, ptr, sets_id));
+
+            println!("===> Insert bit to A");
+            components.insert(a, &mut entities, PtrOwned::new(NonNull::dangling()), bits_id);
+
+            println!("===> Insert table/'fei' to B");
+            PtrOwned::take(TableStored("fei".to_string()), |ptr| components.insert(b, &mut entities, ptr, tabs_id));
+            println!("===> Insert table/'is' to B");
+            PtrOwned::take(TableStored("is".to_string()), |ptr| components.insert(b, &mut entities, ptr, tabs_id));
+
+            println!("===> Remove A");
+            components.remove_all(a, &mut entities);
+            entities.free(a);
         }
 
-        println!("Dropping components.");
+        println!("===> Drop all.");
         Ok(())
     }
 }

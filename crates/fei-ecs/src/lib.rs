@@ -7,6 +7,6 @@ pub mod world;
 pub mod prelude {
     pub use fei_ecs_macros::{
         self,
-        Component,
+        Component, ComponentSet,
     };
 }

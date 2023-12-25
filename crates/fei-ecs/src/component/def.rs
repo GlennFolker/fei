@@ -177,9 +177,12 @@ impl ComponentSetInfo {
         let mut component_offsets = SparseSet::with_capacity(id_len);
 
         for (offset, id) in offsets {
-            components.push(id);
-            component_bits.insert(id.0);
-            component_offsets.insert(id, offset);
+            if component_offsets.insert(id, offset).is_some() {
+                panic!("duplicate component for set `{}`", type_name::<T>());
+            } else {
+                components.push(id);
+                component_bits.insert(id.0);
+            }
         }
 
         Self {
