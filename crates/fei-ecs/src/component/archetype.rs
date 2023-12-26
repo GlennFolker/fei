@@ -134,10 +134,10 @@ impl Table {
 
     #[inline]
     pub unsafe fn update(&mut self, index: usize, set: PtrOwned, set_info: &ComponentSetInfo) {
-        for &id in &*set_info.components {
-            if let Some(column) = self.columns.get_mut(id) {
-                column.set_unchecked(index, ptr::read(&set).byte_add(*set_info.component_offsets.get_unchecked(id)))
-            }
+        for &id in &*set_info.table_components {
+            self.columns
+                .get_unchecked_mut(id)
+                .set_unchecked(index, ptr::read(&set).byte_add(*set_info.component_offsets.get_unchecked(id)));
         }
     }
 
@@ -191,10 +191,44 @@ impl Table {
 
     #[inline]
     #[must_use = "use the returned value as the entity's archetypal index"]
+    pub unsafe fn extract_from(
+        &mut self,
+        from: &mut Self, from_index: usize,
+        mut extract: impl FnMut(ComponentId, PtrOwned),
+    ) -> (Option<Entity>, usize) {
+        let entity = from.entities.swap_remove(from_index);
+        self.entities.push(entity);
+
+        for &id in &*from.components {
+            from.columns
+                .get_unchecked_mut(id)
+                .swap_remove_unchecked(from_index, |ptr| if let Some(to) = self.columns.get_mut(id) {
+                    to.push(ptr);
+                } else {
+                    extract(id, ptr);
+                });
+        }
+
+        (from.entities.get(from_index).copied(), self.entities.len() - 1)
+    }
+
+    #[inline]
+    #[must_use = "use the returned value as the entity's archetypal index"]
     pub unsafe fn remove(&mut self, index: usize) -> Option<Entity> {
         self.entities.swap_remove(index);
         for &id in &*self.components {
             self.columns.get_unchecked_mut(id).swap_remove_unchecked_and_drop(index);
+        }
+
+        self.entities.get(index).copied()
+    }
+
+    #[inline]
+    #[must_use = "use the returned value as the entity's archetypal index"]
+    pub unsafe fn extract(&mut self, index: usize, mut extract: impl FnMut(ComponentId, PtrOwned)) -> Option<Entity> {
+        self.entities.swap_remove(index);
+        for &id in &*self.components {
+            self.columns.get_unchecked_mut(id).swap_remove_unchecked(index, |ptr| extract(id, ptr));
         }
 
         self.entities.get(index).copied()
@@ -260,6 +294,16 @@ impl SparseSets {
                 .remove_and_drop(index);
         }
     }
+
+    #[inline]
+    pub unsafe fn extract(&mut self, entity: Entity, components: &[ComponentId], mut extract: impl FnMut(ComponentId, PtrOwned)) {
+        let index = entity.id();
+        for &id in components {
+            self.sets
+                .get_unchecked_mut(id)
+                .remove(index, |ptr| extract(id, ptr));
+        }
+    }
 }
 
 #[derive(Default)]
@@ -275,7 +319,8 @@ impl Bitset {
 
     #[inline]
     pub unsafe fn contains(&self, entity: Entity, id: ComponentId) -> bool {
-        self.sets.get_unchecked(id).0.contains(entity.id() as usize)
+        let (set, ..) = self.sets.get_unchecked(id);
+        set.contains(entity.id() as usize)
     }
 
     #[inline]
@@ -304,6 +349,15 @@ impl Bitset {
                     dropper(NonNull::<()>::dangling().cast::<u8>().as_ptr());
                 }
             }
+        }
+    }
+
+    #[inline]
+    pub unsafe fn extract(&mut self, entity: Entity, components: &[ComponentId]) {
+        let index = entity.id() as usize;
+        for &id in components {
+            let (set, ..) = self.sets.get_unchecked_mut(id);
+            set.set(index, false);
         }
     }
 }

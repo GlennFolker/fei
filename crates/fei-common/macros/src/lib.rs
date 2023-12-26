@@ -10,7 +10,7 @@ use syn::{
     parse::{
         Parse, ParseStream,
     },
-    Ident, LitInt,
+    Ident, Index, LitInt,
     Token,
 };
 
@@ -78,25 +78,19 @@ pub fn impl_tuples(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let calls = (start..=amount).fold(Vec::<TokenStream>::with_capacity(amount - start + 1), |mut calls, i| {
             calls.push({
                 let params = (start..start + i).fold(Vec::<TokenStream>::with_capacity(i), |mut params, accum| {
-                    let idx = syn::parse_str::<LitInt>(&(accum - start).to_string()).unwrap();
-                    let type_idx = format_ident!("T{idx}");
+                    let idx = Index::from(accum - start);
+                    let type_idx = format_ident!("T{}", accum - start);
 
-                    params.push(quote! {
-                        #type_idx #idx
-                    });
+                    params.push(quote! { #type_idx #idx });
                     params
                 });
 
-                quote! {
-                    #implementor!(#(#params),*)
-                }
+                quote! { #implementor!(#(#params),*) }
             });
             calls
         });
 
-        Ok(quote! {
-            #(#calls;)*
-        })
+        Ok(quote! { #(#calls;)* })
     })() {
         Ok(stream) => stream.into(),
         Err(e) => e.to_compile_error().into(),

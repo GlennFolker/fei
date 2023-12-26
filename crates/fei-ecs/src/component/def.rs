@@ -18,14 +18,14 @@ use std::{
 
 /// Kinds of component storages, each with their own benefits. Note that [zero-sized types](
 /// https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts) always use bitsets as
-/// the container, indexed by [`crate::entity::Entity::id`].
+/// the container, indexed by [`Entity::id`](crate::entity::Entity::id).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ComponentStorage {
     /// A table storage stores archetypes (i.e., the set of all components that belongs to an
-    /// [`Entity`](crate::entity::Entity)) as a structure of arrays, offering faster iteration and cheaper memory requirements.
+    /// [`Entity`](crate::entity::Entity)) as a structure of arrays, offering faster iterations.
     Table,
     /// A sparse set storage stores each component types separately in a sparse set indexed by
-    /// [`Entity::id`](crate::entity::Entity::id), offering faster addition and removal.
+    /// [`Entity::id`](crate::entity::Entity::id), offering faster additions and removals.
     SparseSet,
 }
 
@@ -146,6 +146,7 @@ pub struct ComponentSetInfo {
     pub(super) component_bits: FixedBitSet,
     pub(super) component_offsets: SparseSet<ComponentId, usize>,
 
+    pub(super) table_components: Box<[ComponentId]>,
     pub(super) sparse_set_components: Box<[ComponentId]>,
     pub(super) zst_components: Box<[ComponentId]>,
 }
@@ -153,6 +154,8 @@ pub struct ComponentSetInfo {
 impl ComponentSetInfo {
     pub fn new<T: ComponentSet>(mut register_component: impl FnMut(TypeId, ComponentInfo) -> ComponentId) -> Self {
         let mut offsets = Vec::new();
+
+        let mut table_components = Vec::new();
         let mut sparse_set_components = Vec::new();
         let mut zst_components = Vec::new();
 
@@ -160,11 +163,11 @@ impl ComponentSetInfo {
             let id = register_component(type_id, info);
             offsets.push((offset, id));
 
-            if info.is_zst() {
-                zst_components.push(id);
-            } else if info.storage == ComponentStorage::SparseSet {
-                sparse_set_components.push(id);
-            }
+            match info.storage() {
+                Some(ComponentStorage::Table) => &mut table_components,
+                Some(ComponentStorage::SparseSet) => &mut sparse_set_components,
+                None => &mut zst_components,
+            }.push(id);
         });
 
         offsets.sort_unstable_by_key(|&(.., ComponentId(id))| id);
@@ -190,6 +193,7 @@ impl ComponentSetInfo {
             component_bits,
             component_offsets,
 
+            table_components: table_components.into_boxed_slice(),
             sparse_set_components: sparse_set_components.into_boxed_slice(),
             zst_components: zst_components.into_boxed_slice(),
         }

@@ -7,8 +7,8 @@ use std::{
     mem::ManuallyDrop,
 };
 
-/// Represents an untyped pointer that logically owns the data over the lifetime `'a`. This pointer is
-/// responsible for calling the data's drop implementation, but *not* deallocation. This pointer is
+/// Represents an untyped thin-pointer that logically owns the data over the lifetime `'a`. This pointer
+/// is responsible for calling the data's drop implementation, but *not* deallocation. This pointer is
 /// mentally equivalent to [`ManuallyDrop<T>`].
 ///
 /// # Examples
@@ -205,8 +205,8 @@ impl<'a> PtrOwned<'a> {
     }
 }
 
-/// Represents an untyped pointer that logically mutably references the data over the lifetime `'a`.
-/// This pointer is mentally equivalent to [`&mut MaybeUninit<T>`](std::mem::MaybeUninit).
+/// Represents an untyped thin-pointer that logically mutably references the data over the lifetime
+/// `'a`. This pointer is mentally equivalent to [`&mut MaybeUninit<T>`](std::mem::MaybeUninit).
 pub struct PtrMut<'a> {
     ptr: NonNull<u8>,
     _marker: PhantomData<&'a mut u8>,
@@ -336,8 +336,8 @@ impl<'a, T> From<&'a mut T> for PtrMut<'a> {
     }
 }
 
-/// Represents an untyped pointer that logically immutably references the data over the lifetime `'a`.
-/// This pointer is mentally equivalent to `&T`.
+/// Represents an untyped thin-pointer that logically immutably references the data over the lifetime
+/// `'a`. This pointer is mentally equivalent to `&T`.
 #[derive(Copy, Clone)]
 pub struct Ptr<'a> {
     ptr: NonNull<u8>,

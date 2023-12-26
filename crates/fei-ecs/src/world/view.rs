@@ -138,7 +138,7 @@ impl<'a> EntityViewMut<'a> {
 
     #[inline]
     pub unsafe fn insert_by_id(&mut self, set: PtrOwned, set_id: ComponentSetId) {
-        self.components.insert(self.entity, self.entities, set, set_id)
+        self.components.insert_set(self.entity, self.entities, set, set_id)
     }
 
     #[inline]
