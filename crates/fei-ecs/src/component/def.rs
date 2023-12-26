@@ -29,7 +29,7 @@ pub enum ComponentStorage {
     SparseSet,
 }
 
-pub trait Component: 'static + Send + Sync {
+pub trait Component: 'static + Send + Sync + Sized {
     /// Storage type for this component type. Setting this is no-op for [zero-sized types](
     /// https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts), as the storages
     /// for those will always be bitsets indexed by [`crate::entity::Entity::id`].
@@ -92,7 +92,7 @@ impl ComponentInfo {
     }
 }
 
-pub unsafe trait ComponentSet: 'static + Send + Sync {
+pub unsafe trait ComponentSet: 'static + Send + Sync + Sized {
     fn metadata(base_offset: usize, callback: &mut impl FnMut(usize, TypeId, ComponentInfo));
 }
 

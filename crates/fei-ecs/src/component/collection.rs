@@ -478,6 +478,13 @@ mod tests {
             println!("===> Remove A");
             components.remove_all(a, &mut entities);
             entities.free(a);
+
+            println!("===> Insert all to B");
+            PtrOwned::take(AllSet {
+                table: TableStored("short".to_string()),
+                set: SetStored(4.2),
+                bit: BitStored,
+            }, |ptr| components.insert(b, &mut entities, ptr, all_id));
         }
 
         println!("===> Drop all.");
