@@ -3,3 +3,6 @@
 
 .idea/
 .vscode/
+
+chrome_profiler.json
+**/crox/**
