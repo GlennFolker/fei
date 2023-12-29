@@ -20,7 +20,7 @@ use syn::{
 pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     match (move || -> syn::Result<TokenStream> {
         let mut input = syn::parse::<DeriveInput>(input)?;
-        let fei_ecs = fei_macros::module("fei-ecs")?.ok_or_else(|| Error::new_spanned(&input, "`fei-ecs` is unavailable"))?;
+        let fei_ecs = fei_macros::module("fei-ecs")?.ok_or_else(|| Error::new_spanned(&input, "`fei-world` is unavailable"))?;
 
         let mut storage = "Table".to_string();
         for meta in input.attrs.iter().filter(|&attr| attr.path().is_ident("component")) {
@@ -63,7 +63,7 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
 pub fn derive_component_set(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     match (move || -> syn::Result<TokenStream> {
         let mut input = syn::parse::<DeriveInput>(input)?;
-        let fei_ecs = fei_macros::module("fei-ecs")?.ok_or_else(|| Error::new_spanned(&input, "`fei-ecs` is unavailable."))?;
+        let fei_ecs = fei_macros::module("fei-ecs")?.ok_or_else(|| Error::new_spanned(&input, "`fei-world` is unavailable."))?;
 
         let Data::Struct(data) = &input.data else {
             return Err(Error::new_spanned(&input, "Only `struct`s are allowed for deriving `ComponentSet`."))

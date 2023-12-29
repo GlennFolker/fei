@@ -47,9 +47,9 @@ pub struct Components {
 
 impl Components {
     #[inline]
-    pub fn register_component<T: Component>(&mut self) -> ComponentId {
+    pub fn register<T: Component>(&mut self) -> ComponentId {
         // Safety: Type ID and layout information matches.
-        unsafe { Self::register_component_impl(
+        unsafe { Self::register_impl(
             &mut self.bitsets, &mut self.sparse_sets,
             &mut self.component_info, &mut self.component_ids,
             TypeId::of::<T>(), ComponentInfo::new::<T>(),
@@ -57,15 +57,15 @@ impl Components {
     }
 
     #[inline]
-    pub unsafe fn register_component_raw(&mut self, type_id: TypeId, info: ComponentInfo) -> ComponentId {
-        Self::register_component_impl(
+    pub unsafe fn register_raw(&mut self, type_id: TypeId, info: ComponentInfo) -> ComponentId {
+        Self::register_impl(
             &mut self.bitsets, &mut self.sparse_sets,
             &mut self.component_info, &mut self.component_ids,
             type_id, info,
         )
     }
 
-    unsafe fn register_component_impl(
+    unsafe fn register_impl(
         bitsets: &mut Bitset,
         sparse_sets: &mut SparseSets,
         component_info: &mut Vec<ComponentInfo>,
@@ -92,10 +92,10 @@ impl Components {
         self.component_ids.get(&TypeId::of::<T>()).copied()
     }
 
-    pub fn register_component_set<T: ComponentSet>(&mut self) -> ComponentSetId {
+    pub fn register_set<T: ComponentSet>(&mut self) -> ComponentSetId {
         *self.component_set_ids.entry(TypeId::of::<T>()).or_insert_with(|| {
             let set_info = ComponentSetInfo::new::<T>(|type_id, component_info| unsafe {
-                Self::register_component_impl(
+                Self::register_impl(
                     &mut self.bitsets, &mut self.sparse_sets,
                     &mut self.component_info, &mut self.component_ids,
                     type_id, component_info,
@@ -147,7 +147,7 @@ impl Components {
         }
     }
 
-    pub unsafe fn insert_set(&mut self, entity: Entity, entities: &mut Entities, set: PtrOwned, set_id: ComponentSetId) {
+    pub unsafe fn insert(&mut self, entity: Entity, entities: &mut Entities, set: PtrOwned, set_id: ComponentSetId) {
         let location = entities.location_mut(entity);
         let set_info = self.component_set_info.get_unchecked(set_id.0);
 
@@ -213,7 +213,7 @@ impl Components {
         }
     }
 
-    pub unsafe fn remove_set(&mut self, entity: Entity, entities: &mut Entities, set_id: ComponentSetId) {
+    pub unsafe fn remove(&mut self, entity: Entity, entities: &mut Entities, set_id: ComponentSetId) {
         let location = entities.location_mut(entity);
         let set_info = self.component_set_info.get_unchecked(set_id.0);
 
@@ -270,7 +270,7 @@ impl Components {
         }
     }
 
-    pub unsafe fn extract_set(
+    pub unsafe fn extract(
         &mut self, entity: Entity, entities: &mut Entities, set_id: ComponentSetId,
         mut extract: impl FnMut(usize, usize, PtrOwned),
     ) -> bool {
@@ -354,12 +354,12 @@ impl Components {
         true
     }
 
-    pub unsafe fn extract_set_as<T: ComponentSet>(&mut self, entity: Entity, entities: &mut Entities) -> Option<T> {
-        let set_id = self.register_component_set::<T>();
+    pub unsafe fn extract_as<T: ComponentSet>(&mut self, entity: Entity, entities: &mut Entities) -> Option<T> {
+        let set_id = self.register_set::<T>();
 
         let mut set = MaybeUninit::<T>::uninit();
         let base = NonNull::new_unchecked(set.as_mut_ptr()).cast::<u8>();
-        if self.extract_set(entity, entities, set_id, |offset, size, ptr| {
+        if self.extract(entity, entities, set_id, |offset, size, ptr| {
             PtrMut::new(base)
                 .byte_add(offset)
                 .write(ptr, size);
@@ -370,7 +370,7 @@ impl Components {
         }
     }
 
-    pub unsafe fn remove_all(&mut self, entity: Entity, entities: &mut Entities) {
+    pub unsafe fn clear(&mut self, entity: Entity, entities: &mut Entities) {
         let Some(loc) = entities.location_mut(entity).take() else { return };
         let arch = self.archetypes.get_unchecked(loc.archetype_id.0);
 
@@ -576,10 +576,10 @@ mod tests {
         }
 
         let mut components = Components::default();
-        let tab_id = components.register_component_set::<TableStored>();
-        let set_id = components.register_component_set::<SetStored>();
-        let bit_id = components.register_component_set::<BitStored>();
-        let all_id = components.register_component_set::<AllSet>();
+        let tab_id = components.register_set::<TableStored>();
+        let set_id = components.register_set::<SetStored>();
+        let bit_id = components.register_set::<BitStored>();
+        let all_id = components.register_set::<AllSet>();
 
         let mut entities = Entities::default();
         let a = entities.spawn()?;
@@ -587,28 +587,28 @@ mod tests {
 
         unsafe {
             println!("===> Insert table/'fei' to A");
-            PtrOwned::take(TableStored("fei".to_string()), |ptr| components.insert_set(a, &mut entities, ptr, tab_id));
+            PtrOwned::take(TableStored("fei".to_string()), |ptr| components.insert(a, &mut entities, ptr, tab_id));
             println!("===> Insert table/'is' to A");
-            PtrOwned::take(TableStored("is".to_string()), |ptr| components.insert_set(a, &mut entities, ptr, tab_id));
+            PtrOwned::take(TableStored("is".to_string()), |ptr| components.insert(a, &mut entities, ptr, tab_id));
 
             println!("===> Remove table from A");
-            components.remove_set(a, &mut entities, tab_id);
+            components.remove(a, &mut entities, tab_id);
             println!("===> Insert table/'short' to A");
-            PtrOwned::take(TableStored("short".to_string()), |ptr| components.insert_set(a, &mut entities, ptr, tab_id));
+            PtrOwned::take(TableStored("short".to_string()), |ptr| components.insert(a, &mut entities, ptr, tab_id));
 
             println!("===> Insert set/6.942 to A");
-            PtrOwned::take(SetStored(6.942), |ptr| components.insert_set(a, &mut entities, ptr, set_id));
+            PtrOwned::take(SetStored(6.942), |ptr| components.insert(a, &mut entities, ptr, set_id));
 
             println!("===> Insert bit to A");
-            components.insert_set(a, &mut entities, PtrOwned::new(NonNull::dangling()), bit_id);
+            components.insert(a, &mut entities, PtrOwned::new(NonNull::dangling()), bit_id);
 
             println!("===> Insert table/'fei' to B");
-            PtrOwned::take(TableStored("fei".to_string()), |ptr| components.insert_set(b, &mut entities, ptr, tab_id));
+            PtrOwned::take(TableStored("fei".to_string()), |ptr| components.insert(b, &mut entities, ptr, tab_id));
             println!("===> Insert table/'is' to B");
-            PtrOwned::take(TableStored("is".to_string()), |ptr| components.insert_set(b, &mut entities, ptr, tab_id));
+            PtrOwned::take(TableStored("is".to_string()), |ptr| components.insert(b, &mut entities, ptr, tab_id));
 
             println!("===> Remove A");
-            components.remove_all(a, &mut entities);
+            components.clear(a, &mut entities);
             entities.free(a);
 
             println!("===> Insert all to B");
@@ -616,22 +616,75 @@ mod tests {
                 table: TableStored("short".to_string()),
                 set: SetStored(4.2),
                 bit: BitStored,
-            }, |ptr| components.insert_set(b, &mut entities, ptr, all_id));
+            }, |ptr| components.insert(b, &mut entities, ptr, all_id));
 
             println!("Extract (set, bit) from B, expecting success");
-            assert!(components.extract_set_as::<(SetStored, BitStored)>(b, &mut entities).is_some());
+            assert!(components.extract_as::<(SetStored, BitStored)>(b, &mut entities).is_some());
 
             println!("Extract all from B, expecting failure");
-            assert!(components.extract_set_as::<AllSet>(b, &mut entities).is_none());
+            assert!(components.extract_as::<AllSet>(b, &mut entities).is_none());
+
+            println!("Remove all from B, expecting success");
+            components.remove(b, &mut entities, all_id);
         }
 
-        println!("===> Drop all.");
+        println!("===> Finish");
         Ok(())
     }
 
     #[test]
     fn table_migration() -> anyhow::Result<()> {
+        #[derive(Component)]
+        struct Tab1(u8);
+        impl Drop for Tab1 {
+            #[inline]
+            fn drop(&mut self) {
+                println!("Tab1({}) dropped.", self.0);
+            }
+        }
+
+        #[derive(Component)]
+        struct Tab2(u16);
+        impl Drop for Tab2 {
+            #[inline]
+            fn drop(&mut self) {
+                println!("Tab2({}) dropped.", self.0);
+            }
+        }
+
+        #[derive(Component)]
+        struct Tab3(u32);
+        impl Drop for Tab3 {
+            #[inline]
+            fn drop(&mut self) {
+                println!("Tab3({}) dropped.", self.0);
+            }
+        }
+
         let mut components = Components::default();
+        let tab1_id = components.register_set::<Tab1>();
+        let tab2_id = components.register_set::<Tab2>();
+        let tab3_id = components.register_set::<Tab3>();
+
+        let mut entities = Entities::default();
+        let a = entities.spawn()?;
+
+        unsafe {
+            println!("===> Insert Tab1, Tab2, Tab3");
+            PtrOwned::take(Tab1(0), |ptr| components.insert(a, &mut entities, ptr, tab1_id));
+            PtrOwned::take(Tab2(1), |ptr| components.insert(a, &mut entities, ptr, tab2_id));
+            PtrOwned::take(Tab3(2), |ptr| components.insert(a, &mut entities, ptr, tab3_id));
+
+            println!("===> Remove Tab1");
+            components.remove(a, &mut entities, tab1_id);
+            println!("===> Remove Tab2");
+            components.remove(a, &mut entities, tab2_id);
+
+            println!("===> Insert Tab1");
+            PtrOwned::take(Tab1(4), |ptr| components.insert(a, &mut entities, ptr, tab1_id));
+        }
+
+        println!("===> Finish");
         Ok(())
     }
 }

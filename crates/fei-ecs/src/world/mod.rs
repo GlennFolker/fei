@@ -57,3 +57,48 @@ impl World {
             .ok_or(NonexistentError)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fei_ecs_macros::Component;
+
+    #[test]
+    fn viewing() -> anyhow::Result<()> {
+        #[derive(Component, Debug, Eq, PartialEq)]
+        struct Name(String);
+        #[derive(Component, Debug, PartialEq)]
+        struct Height(f32);
+        #[derive(Component, Debug, Eq, PartialOrd, PartialEq)]
+        struct LoveInterest(Entity);
+
+        let mut ecs = World::default();
+
+        let fei = {
+            let mut fei = ecs.spawn((Name("fei".to_string()), Height(-100.0)))?;
+            assert_eq!(fei.get::<Name>(), Some(&Name("fei".to_string())));
+            assert_eq!(fei.get_mut::<Height>(), Some(&mut Height(-100.0)));
+            assert_eq!(fei.get::<LoveInterest>(), None);
+
+            let Some((name, height)) = fei.extract::<(Name, Height)>() else { anyhow::bail!("Invalid components") };
+            assert_eq!(name.0, "fei");
+            assert_eq!(height.0, -100.0);
+
+            fei.insert((name, height));
+            fei.id()
+        };
+
+        let who_knows = {
+            let mut who_knows = ecs.spawn_empty()?;
+            who_knows.insert((Name("oh wouldn't you like to know :^)".to_string()), LoveInterest(fei)));
+
+            let who_knows = who_knows.id();
+            ecs.view_mut(fei)?.insert(LoveInterest(who_knows));
+            who_knows
+        };
+
+        assert_eq!(ecs.view(fei)?.get::<LoveInterest>(), Some(&LoveInterest(who_knows)));
+        assert_eq!(ecs.view(who_knows)?.get::<LoveInterest>(), Some(&LoveInterest(fei)));
+        Ok(())
+    }
+}

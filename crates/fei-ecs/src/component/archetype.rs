@@ -289,9 +289,8 @@ impl SparseSets {
     pub unsafe fn remove(&mut self, entity: Entity, components: &[ComponentId]) {
         let index = entity.id();
         for &id in components {
-            self.sets
-                .get_unchecked_mut(id)
-                .remove_and_drop(index);
+            let Some(set) = self.sets.get_mut(id) else { continue };
+            set.remove_and_drop(index);
         }
     }
 
@@ -342,7 +341,7 @@ impl Bitset {
     pub unsafe fn remove(&mut self, entity: Entity, components: &[ComponentId]) {
         let index = entity.id() as usize;
         for &id in components {
-            let (set, dropper) = self.sets.get_unchecked_mut(id);
+            let Some((set, dropper)) = self.sets.get_mut(id) else { continue };
             if set.contains(index) {
                 set.set(index, false);
                 if let Some(dropper) = *dropper {
@@ -366,7 +365,7 @@ impl Drop for Bitset {
     #[inline]
     fn drop(&mut self) {
         for (set, dropper) in self.sets.iter_sparse() {
-            if let Some(dropper) = dropper {
+            if let Some(dropper) = *dropper {
                 for _ in 0..set.count_ones(..) {
                     unsafe { dropper(NonNull::<()>::dangling().cast::<u8>().as_ptr()) };
                 }

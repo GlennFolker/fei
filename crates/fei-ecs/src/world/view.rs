@@ -25,6 +25,11 @@ impl<'a> EntityView<'a> {
     }
 
     #[inline]
+    pub fn id(&self) -> Entity {
+        self.entity
+    }
+
+    #[inline]
     pub fn contains<T: Component>(&self) -> bool {
         self.components
             .get_component_id::<T>()
@@ -74,6 +79,11 @@ impl<'a> EntityViewMut<'a> {
     }
 
     #[inline]
+    pub fn id(&self) -> Entity {
+        self.entity
+    }
+
+    #[inline]
     pub fn contains<T: Component>(&self) -> bool {
         self.components
             .get_component_id::<T>()
@@ -111,7 +121,7 @@ impl<'a> EntityViewMut<'a> {
 
     #[inline]
     pub fn get_mut<T: Component>(&mut self) -> Option<&mut T> {
-        let id = self.components.register_component::<T>();
+        let id = self.components.register::<T>();
         unsafe {
             self.entities
                 .location(self.entity)
@@ -130,24 +140,23 @@ impl<'a> EntityViewMut<'a> {
 
     #[inline]
     pub fn insert<T: ComponentSet>(&mut self, set: T) {
-        unsafe {
-            let id = self.components.register_component_set::<T>();
-            PtrOwned::take(set, |ptr| self.insert_by_id(ptr, id));
-        }
+        let id = self.components.register_set::<T>();
+        unsafe { PtrOwned::take(set, |ptr| self.insert_by_id(ptr, id)); }
     }
 
     #[inline]
     pub unsafe fn insert_by_id(&mut self, set: PtrOwned, set_id: ComponentSetId) {
-        self.components.insert_set(self.entity, self.entities, set, set_id)
+        self.components.insert(self.entity, self.entities, set, set_id)
     }
 
     #[inline]
-    pub fn remove<T: Component>(&mut self) {
-
+    pub fn extract<T: ComponentSet>(&mut self) -> Option<T> {
+        unsafe { self.components.extract_as(self.entity, self.entities) }
     }
 
     #[inline]
-    pub fn remove_all<T: ComponentSet>(&mut self) {
-
+    pub fn remove<T: ComponentSet>(&mut self) {
+        let id = self.components.register_set::<T>();
+        unsafe { self.components.remove(self.entity, self.entities, id) }
     }
 }
