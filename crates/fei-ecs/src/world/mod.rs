@@ -73,7 +73,6 @@ mod tests {
         struct LoveInterest(Entity);
 
         let mut ecs = World::default();
-
         let fei = {
             let mut fei = ecs.spawn((Name("fei".to_string()), Height(-100.0)))?;
             assert_eq!(fei.get::<Name>(), Some(&Name("fei".to_string())));
