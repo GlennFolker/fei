@@ -82,7 +82,7 @@ pub(super) struct Table {
     components: Box<[ComponentId]>,
     pub component_bits: FixedBitSet,
     entities: Vec<Entity>,
-    columns: SparseSet<ComponentId, VecErased>,
+    columns: SparseSet<ComponentId, VecErased<'static>>,
 }
 
 impl Table {
@@ -121,7 +121,7 @@ impl Table {
 
     #[inline]
     #[must_use = "use the returned value as the entity's archetypal index"]
-    pub unsafe fn insert(&mut self, entity: Entity, set: PtrOwned, set_info: &ComponentSetInfo) -> usize {
+    pub unsafe fn insert(&mut self, entity: Entity, set: PtrOwned<'static>, set_info: &ComponentSetInfo) -> usize {
         self.entities.push(entity);
         for &id in &*self.components {
             self.columns
@@ -133,7 +133,7 @@ impl Table {
     }
 
     #[inline]
-    pub unsafe fn update(&mut self, index: usize, set: PtrOwned, set_info: &ComponentSetInfo) {
+    pub unsafe fn update(&mut self, index: usize, set: PtrOwned<'static>, set_info: &ComponentSetInfo) {
         for &id in &*set_info.table_components {
             self.columns
                 .get_unchecked_mut(id)
@@ -146,7 +146,7 @@ impl Table {
     pub unsafe fn insert_from(
         &mut self,
         from: &mut Self, from_index: usize,
-        set: PtrOwned, set_info: &ComponentSetInfo,
+        set: PtrOwned<'static>, set_info: &ComponentSetInfo,
     ) -> (Option<Entity>, usize) {
         let entity = from.entities.swap_remove(from_index);
         self.entities.push(entity);
@@ -194,7 +194,7 @@ impl Table {
     pub unsafe fn extract_from(
         &mut self,
         from: &mut Self, from_index: usize,
-        mut extract: impl FnMut(ComponentId, PtrOwned),
+        mut extract: impl FnMut(ComponentId, PtrOwned<'static>),
     ) -> (Option<Entity>, usize) {
         let entity = from.entities.swap_remove(from_index);
         self.entities.push(entity);
@@ -225,7 +225,7 @@ impl Table {
 
     #[inline]
     #[must_use = "use the returned value as the entity's archetypal index"]
-    pub unsafe fn extract(&mut self, index: usize, mut extract: impl FnMut(ComponentId, PtrOwned)) -> Option<Entity> {
+    pub unsafe fn extract(&mut self, index: usize, mut extract: impl FnMut(ComponentId, PtrOwned<'static>)) -> Option<Entity> {
         self.entities.swap_remove(index);
         for &id in &*self.components {
             self.columns.get_unchecked_mut(id).swap_remove_unchecked(index, |ptr| extract(id, ptr));
@@ -251,7 +251,7 @@ impl SparseIndex for TableId {
 
 #[derive(Default)]
 pub(super) struct SparseSets {
-    sets: SparseSet<ComponentId, SparseSetErased<u32>>,
+    sets: SparseSet<ComponentId, SparseSetErased<'static, u32>>,
 }
 
 impl SparseSets {
@@ -276,7 +276,7 @@ impl SparseSets {
     }
 
     #[inline]
-    pub unsafe fn insert(&mut self, entity: Entity, set: PtrOwned, set_info: &ComponentSetInfo) {
+    pub unsafe fn insert(&mut self, entity: Entity, set: PtrOwned<'static>, set_info: &ComponentSetInfo) {
         let index = entity.id();
         for &id in &*set_info.sparse_set_components {
             self.sets
@@ -295,7 +295,7 @@ impl SparseSets {
     }
 
     #[inline]
-    pub unsafe fn extract(&mut self, entity: Entity, components: &[ComponentId], mut extract: impl FnMut(ComponentId, PtrOwned)) {
+    pub unsafe fn extract(&mut self, entity: Entity, components: &[ComponentId], mut extract: impl FnMut(ComponentId, PtrOwned<'static>)) {
         let index = entity.id();
         for &id in components {
             self.sets

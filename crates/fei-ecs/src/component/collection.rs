@@ -147,7 +147,7 @@ impl Components {
         }
     }
 
-    pub unsafe fn insert(&mut self, entity: Entity, entities: &mut Entities, set: PtrOwned, set_id: ComponentSetId) {
+    pub unsafe fn insert(&mut self, entity: Entity, entities: &mut Entities, set: PtrOwned<'static>, set_id: ComponentSetId) {
         let location = entities.location_mut(entity);
         let set_info = self.component_set_info.get_unchecked(set_id.0);
 
@@ -272,7 +272,7 @@ impl Components {
 
     pub unsafe fn extract(
         &mut self, entity: Entity, entities: &mut Entities, set_id: ComponentSetId,
-        mut extract: impl FnMut(usize, usize, PtrOwned),
+        mut extract: impl FnMut(usize, usize, PtrOwned<'static>),
     ) -> bool {
         let location = entities.location_mut(entity);
         let set_info = self.component_set_info.get_unchecked(set_id.0);

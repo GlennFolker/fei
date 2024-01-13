@@ -12,6 +12,7 @@ use std::{
         alloc, dealloc, realloc,
         handle_alloc_error,
     },
+    marker::PhantomData,
     ptr::NonNull,
 };
 
@@ -73,7 +74,7 @@ use std::{
 /// - `T` must outlive the vector.
 /// - All data types inserted to the vector must be equivalent to `T`; i.e., it must have the same
 ///   size and alignment as `T`, and can be safely dropped with [the dropper function](VecErased::dropper).
-pub struct VecErased {
+pub struct VecErased<'a> {
     array: NonNull<u8>,
     layout: Layout,
     array_layout: Layout,
@@ -82,6 +83,8 @@ pub struct VecErased {
 
     len: usize,
     cap: usize,
+
+    _marker: PhantomData<&'a mut u8>,
 }
 
 /// Defines how items in the [`VecErased`] are dropped. Most commonly created with
@@ -153,14 +156,14 @@ impl From<Option<unsafe fn(*mut u8)>> for DropErased {
     }
 }
 
-impl VecErased {
+impl<'a> VecErased<'a> {
     /// Constructs a new [`VecErased`] from the item layout and drop implementation without pre-allocating
     /// the buffer.
     ///
     /// # Safety
     /// - The dropper must follow the safety requirements mentioned in [`DropErased`].
     #[inline]
-    pub const unsafe fn new(layout: Layout, drop: DropErased) -> Self {
+    pub unsafe fn new(layout: Layout, drop: DropErased) -> Self {
         let (array_layout, array_stride) = array_layout(layout, 0);
         Self {
             array: NonNull::dangling(),
@@ -171,6 +174,8 @@ impl VecErased {
 
             len: 0,
             cap: 0,
+
+            _marker: PhantomData,
         }
     }
 
@@ -191,14 +196,14 @@ impl VecErased {
     /// Safely constructs a new [`VecErased`] containing `T` with automatic dropping without
     /// pre-allocating the buffer.
     #[inline]
-    pub const fn typed<T>() -> Self {
+    pub fn typed<T: 'a>() -> Self {
         unsafe { Self::new(Layout::new::<T>(), DropErased::automatic::<T>()) }
     }
 
     /// Safely constructs a new [`VecErased`] containing `T` with automatic dropping that pre-allocates
     /// the buffer with the size of the given `capacity`.
     #[inline]
-    pub fn typed_with_capacity<T>(capacity: usize) -> Self {
+    pub fn typed_with_capacity<T: 'a>(capacity: usize) -> Self {
         let mut this = Self::typed::<T>();
         if capacity == 0 { return this; }
 
@@ -300,7 +305,7 @@ impl VecErased {
 
     /// Sets the item at `index` and drops the previous item, with bounds-checking.
     #[inline]
-    pub unsafe fn set<'a>(&mut self, index: usize, value: PtrOwned<'a>) -> Result<(), PtrOwned<'a>> {
+    pub unsafe fn set<'t: 'a>(&mut self, index: usize, value: PtrOwned<'t>) -> Result<(), PtrOwned<'a>> {
         if index < self.len {
             Ok(self.set_unchecked(index, value))
         } else {
@@ -314,7 +319,7 @@ impl VecErased {
     /// - `index` must be lesser than [`len`](VecErased::len).
     /// - `value` must contain the same data type as the vector contains.
     #[inline]
-    pub unsafe fn set_unchecked(&mut self, index: usize, value: PtrOwned) {
+    pub unsafe fn set_unchecked<'t: 'a>(&mut self, index: usize, value: PtrOwned<'t>) {
         debug_assert!(index < self.len);
 
         let size = self.layout.size();
@@ -330,7 +335,7 @@ impl VecErased {
     /// # Safety
     /// - `value` must contain the same data type as the vector contains.
     #[inline]
-    pub unsafe fn swap<'a, R>(&mut self, index: usize, value: PtrOwned<'a>, prev: impl FnOnce(PtrOwned) -> R) -> Result<R, PtrOwned<'a>> {
+    pub unsafe fn swap<'t: 'a, R: 'a>(&mut self, index: usize, value: PtrOwned<'t>, prev: impl FnOnce(PtrOwned<'a>) -> R) -> Result<R, PtrOwned<'a>> {
         if index < self.len {
             Ok(self.swap_unchecked(index, value, prev))
         } else {
@@ -344,7 +349,7 @@ impl VecErased {
     /// - `index` must be lesser than [`len`](VecErased::len).
     /// - `value` must contain the same data type as the vector contains.
     #[inline]
-    pub unsafe fn swap_unchecked<R>(&mut self, index: usize, value: PtrOwned, prev: impl FnOnce(PtrOwned) -> R) -> R {
+    pub unsafe fn swap_unchecked<'t: 'a, R: 'a>(&mut self, index: usize, value: PtrOwned<'t>, prev: impl FnOnce(PtrOwned<'a>) -> R) -> R {
         debug_assert!(index < self.len);
 
         let size = self.layout.size();
@@ -357,7 +362,7 @@ impl VecErased {
     /// # Safety
     /// - `value` must contain the same data type as the vector contains.
     #[inline]
-    pub unsafe fn write<'a>(&mut self, index: usize, value: PtrOwned<'a>) -> Result<(), PtrOwned<'a>> {
+    pub unsafe fn write<'t: 'a>(&mut self, index: usize, value: PtrOwned<'t>) -> Result<(), PtrOwned<'a>> {
         if index < self.len {
             Ok(self.write_unchecked(index, value))
         } else {
@@ -371,7 +376,7 @@ impl VecErased {
     /// - `index` must be lesser than [`len`](VecErased::len).
     /// - `value` must contain the same data type as the vector contains.
     #[inline]
-    pub unsafe fn write_unchecked(&mut self, index: usize, value: PtrOwned) {
+    pub unsafe fn write_unchecked<'t: 'a>(&mut self, index: usize, value: PtrOwned<'t>) {
         debug_assert!(index < self.len);
 
         let size = self.layout.size();
@@ -384,7 +389,7 @@ impl VecErased {
     /// # Safety
     /// - `value` must contain the same data type as the vector contains.
     #[inline]
-    pub unsafe fn remove<R>(&mut self, index: usize, removed: impl FnOnce(PtrOwned) -> R) -> Option<R> {
+    pub unsafe fn remove<R: 'a>(&mut self, index: usize, removed: impl FnOnce(PtrOwned<'a>) -> R) -> Option<R> {
         if index < self.len {
             Some(self.remove_unchecked(index, removed))
         } else {
@@ -398,7 +403,7 @@ impl VecErased {
     /// - `index` must be lesser than [`len`](VecErased::len).
     /// - `value` must contain the same data type as the vector contains.
     #[inline]
-    pub unsafe fn remove_unchecked<R>(&mut self, index: usize, removed: impl FnOnce(PtrOwned) -> R) -> R {
+    pub unsafe fn remove_unchecked<R: 'a>(&mut self, index: usize, removed: impl FnOnce(PtrOwned<'a>) -> R) -> R {
         let ret = removed(self.get_unchecked_mut(index).own());
 
         if index != self.len - 1 {
@@ -415,7 +420,7 @@ impl VecErased {
 
     /// Removes an item at `index` and moves the last item to `index` to fill the empty space, if any.
     #[inline]
-    pub fn swap_remove<R>(&mut self, index: usize, removed: impl FnOnce(PtrOwned) -> R) -> Option<R> {
+    pub fn swap_remove<R: 'a>(&mut self, index: usize, removed: impl FnOnce(PtrOwned<'a>) -> R) -> Option<R> {
         if index < self.len {
             Some(unsafe { self.swap_remove_unchecked(index, removed) })
         } else {
@@ -428,7 +433,7 @@ impl VecErased {
     /// # Safety
     /// - `index` must be lesser than [`len`](VecErased::len).
     #[inline]
-    pub unsafe fn swap_remove_unchecked<R>(&mut self, index: usize, removed: impl FnOnce(PtrOwned) -> R) -> R {
+    pub unsafe fn swap_remove_unchecked<R: 'a>(&mut self, index: usize, removed: impl FnOnce(PtrOwned<'a>) -> R) -> R {
         let ret = removed(self.get_unchecked_mut(index).own());
 
         if index != self.len - 1 {
@@ -468,7 +473,7 @@ impl VecErased {
     /// # Safety
     /// `value` must contain the same data type as the vector contains.
     #[inline]
-    pub unsafe fn push(&mut self, value: PtrOwned) {
+    pub unsafe fn push<'t: 'a>(&mut self, value: PtrOwned<'t>) {
         let size = self.layout.size();
         self.reserve(1);
         self.len += 1;
@@ -478,7 +483,7 @@ impl VecErased {
     /// Pops an item from the back of the vector, with bounds-checking. Note that while the function
     /// itself is safe, using the owning pointer passed to `popped` is unsafe.
     #[inline]
-    pub fn pop<R>(&mut self, popped: impl FnOnce(PtrOwned) -> R) -> Option<R> {
+    pub fn pop<R: 'a>(&mut self, popped: impl FnOnce(PtrOwned<'a>) -> R) -> Option<R> {
         if self.len > 0 {
             Some(unsafe { self.pop_unchecked(popped) })
         } else {
@@ -493,7 +498,7 @@ impl VecErased {
     /// # Safety
     /// [`len`](VecErased::len) must be greater than 0.
     #[inline]
-    pub unsafe fn pop_unchecked<R>(&mut self, popped: impl FnOnce(PtrOwned) -> R) -> R {
+    pub unsafe fn pop_unchecked<R: 'a>(&mut self, popped: impl FnOnce(PtrOwned<'a>) -> R) -> R {
         let ret = popped(self.get_unchecked_mut(self.len - 1).own());
         self.len -= 1;
         ret
@@ -605,7 +610,7 @@ impl VecErased {
     }
 }
 
-impl Drop for VecErased {
+impl<'a> Drop for VecErased<'a> {
     #[inline]
     fn drop(&mut self) {
         if let DropErased::Auto(dropper) = self.dropper {

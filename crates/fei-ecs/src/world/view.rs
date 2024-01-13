@@ -141,11 +141,11 @@ impl<'a> EntityViewMut<'a> {
     #[inline]
     pub fn insert<T: ComponentSet>(&mut self, set: T) {
         let id = self.components.register_set::<T>();
-        unsafe { PtrOwned::take(set, |ptr| self.insert_by_id(ptr, id)); }
+        PtrOwned::take(set, |ptr| unsafe { self.insert_by_id(ptr, id) });
     }
 
     #[inline]
-    pub unsafe fn insert_by_id(&mut self, set: PtrOwned, set_id: ComponentSetId) {
+    pub unsafe fn insert_by_id(&mut self, set: PtrOwned<'static>, set_id: ComponentSetId) {
         self.components.insert(self.entity, self.entities, set, set_id)
     }
 

@@ -14,16 +14,16 @@ use std::{
     marker::PhantomData,
 };
 
-pub struct SparseSetErased<I: SparseIndex> {
+pub struct SparseSetErased<'a, I: SparseIndex> {
     dense: FixedBitSet,
-    sparse: VecErased,
+    sparse: VecErased<'a>,
     len: usize,
     _marker: PhantomData<I>,
 }
 
-impl<I: SparseIndex> SparseSetErased<I> {
+impl<'a, I: SparseIndex> SparseSetErased<'a, I> {
     #[inline]
-    pub const unsafe fn new(item_layout: Layout, drop: Option<unsafe fn(*mut u8)>) -> Self {
+    pub unsafe fn new(item_layout: Layout, drop: Option<unsafe fn(*mut u8)>) -> Self {
         Self {
             dense: FixedBitSet::new(),
             sparse: VecErased::new(item_layout, match drop {
@@ -36,7 +36,7 @@ impl<I: SparseIndex> SparseSetErased<I> {
     }
 
     #[inline]
-    pub const fn typed<T>() -> Self {
+    pub fn typed<T>() -> Self {
         Self {
             dense: FixedBitSet::new(),
             sparse: unsafe { VecErased::new(Layout::new::<T>(), match drop_for::<T>() {
@@ -48,7 +48,7 @@ impl<I: SparseIndex> SparseSetErased<I> {
         }
     }
 
-    pub unsafe fn insert<R>(&mut self, index: I, value: PtrOwned, prev: impl FnOnce(PtrOwned) -> R) -> Option<R> {
+    pub unsafe fn insert<'t: 'a, R: 'a>(&mut self, index: I, value: PtrOwned<'t>, prev: impl FnOnce(PtrOwned<'a>) -> R) -> Option<R> {
         let index = index.into_index();
         if self.dense.contains(index) {
             Some(self.sparse.swap_unchecked(index, value, prev))
@@ -73,14 +73,14 @@ impl<I: SparseIndex> SparseSetErased<I> {
     }
 
     #[inline]
-    pub unsafe fn insert_and_drop(&mut self, index: I, value: PtrOwned) {
+    pub unsafe fn insert_and_drop<'t: 'a>(&mut self, index: I, value: PtrOwned<'t>) {
         let dropper = self.sparse.dropper();
         self.insert(index, value, |prev| if let DropErased::Manual(dropper) = dropper {
             prev.drop_with(dropper)
         });
     }
 
-    pub fn remove<R>(&mut self, index: I, removed: impl FnOnce(PtrOwned) -> R) -> Option<R> {
+    pub fn remove<R: 'a>(&mut self, index: I, removed: impl FnOnce(PtrOwned<'a>) -> R) -> Option<R> {
         let index = index.into_index();
         self.dense.contains(index)
             .then(|| {
@@ -151,7 +151,7 @@ impl<I: SparseIndex> SparseSetErased<I> {
     }
 }
 
-impl<I: SparseIndex> Drop for SparseSetErased<I> {
+impl<'a, I: SparseIndex> Drop for SparseSetErased<'a, I> {
     #[inline]
     fn drop(&mut self) {
         if let DropErased::Manual(dropper) = self.sparse.dropper() {

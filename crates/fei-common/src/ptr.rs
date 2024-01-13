@@ -99,7 +99,7 @@ impl<'a> PtrOwned<'a> {
     /// Takes a by-value parameter and passes a pointer owning that parameter into a callback,
     /// ensuring no use-after-frees.
     #[inline]
-    pub fn take<T, R>(value: T, acceptor: impl FnOnce(PtrOwned) -> R) -> R {
+    pub fn take<T: 'a, R>(value: T, acceptor: impl FnOnce(PtrOwned<'a>) -> R) -> R {
         // Don't call the destructor, as the data is logically moved to `acceptor`.
         let mut value = ManuallyDrop::new(value);
         // Safety:
@@ -133,7 +133,7 @@ impl<'a> PtrOwned<'a> {
     /// # Safety
     /// The actual type of the pointed-to value must be `T`.
     #[inline]
-    pub unsafe fn read<T>(self) -> T {
+    pub unsafe fn read<T: 'a>(self) -> T {
         self.ptr.cast::<T>().as_ptr().read()
     }
 
@@ -142,7 +142,7 @@ impl<'a> PtrOwned<'a> {
     /// # Safety
     /// The actual type of the pointed-to value must be `T`.
     #[inline]
-    pub unsafe fn drop_as<T>(self) {
+    pub unsafe fn drop_as<T: 'a>(self) {
         self.ptr.cast::<T>().as_ptr().drop_in_place();
     }
 
@@ -161,7 +161,7 @@ impl<'a> PtrOwned<'a> {
     /// # Safety
     /// The actual type of the pointed-to value must be `T`.
     #[inline]
-    pub unsafe fn deref<T>(&self) -> &'a T {
+    pub unsafe fn deref<T: 'a>(&self) -> &'a T {
         self.ptr.cast::<T>().as_ref()
     }
 
@@ -170,7 +170,7 @@ impl<'a> PtrOwned<'a> {
     /// # Safety
     /// The actual type of the pointed-to value must be `T`.
     #[inline]
-    pub unsafe fn deref_mut<T>(&mut self) -> &'a mut T {
+    pub unsafe fn deref_mut<T: 'a>(&mut self) -> &'a mut T {
         self.ptr.cast::<T>().as_mut()
     }
 
@@ -238,7 +238,7 @@ impl<'a> PtrMut<'a> {
     /// # Safety
     /// Refer to the safety guidelines mentioned in [PtrOwned::new].
     #[inline]
-    pub unsafe fn own(self) -> PtrOwned<'a> {
+    pub unsafe fn own<'t: 'a>(self) -> PtrOwned<'t> {
         PtrOwned::new(self.ptr)
     }
 
@@ -247,7 +247,7 @@ impl<'a> PtrMut<'a> {
     /// # Safety
     /// The pointer must point to an initialized instance of `T`.
     #[inline]
-    pub unsafe fn drop_in_place_as<T>(&mut self) {
+    pub unsafe fn drop_in_place_as<T: 'a>(&mut self) {
         self.ptr.cast::<T>().as_ptr().drop_in_place()
     }
 
@@ -270,7 +270,7 @@ impl<'a> PtrMut<'a> {
     /// - This pointer and `new_value` must point to an instance of `T`.
     /// - `size` must be equal to [`size_of::<T>()`](std::mem::size_of).
     #[inline]
-    pub unsafe fn write(&mut self, new_value: PtrOwned, size: usize) {
+    pub unsafe fn write<'t: 'a>(&mut self, new_value: PtrOwned<'t>, size: usize) {
         self.ptr.as_ptr().copy_from_nonoverlapping(new_value.ptr.as_ptr(), size);
     }
 
@@ -282,7 +282,7 @@ impl<'a> PtrMut<'a> {
     /// - This pointer and `new_value` must point to an instance of `T`.
     /// - `size` must be equal to [`size_of::<T>()`](std::mem::size_of).
     #[inline]
-    pub unsafe fn swap<R>(&mut self, new_value: PtrOwned, size: usize, prev: impl FnOnce(PtrOwned) -> R) -> R {
+    pub unsafe fn swap<'t: 'a, R>(&mut self, new_value: PtrOwned<'t>, size: usize, prev: impl FnOnce(PtrOwned<'t>) -> R) -> R {
         let ret = prev(PtrOwned::new(self.ptr));
         self.write(new_value, size);
         ret
@@ -293,7 +293,7 @@ impl<'a> PtrMut<'a> {
     /// # Safety
     /// This pointer must point to an initialized instance of `T`.
     #[inline]
-    pub unsafe fn deref<T>(&self) -> &'a T {
+    pub unsafe fn deref<T: 'a>(&self) -> &'a T {
         self.ptr.cast::<T>().as_ref()
     }
 
@@ -302,7 +302,7 @@ impl<'a> PtrMut<'a> {
     /// # Safety
     /// This pointer must point to an initialized instance of `T`.
     #[inline]
-    pub unsafe fn deref_mut<T>(&mut self) -> &'a mut T {
+    pub unsafe fn deref_mut<T: 'a>(&mut self) -> &'a mut T {
         self.ptr.cast::<T>().as_mut()
     }
 
@@ -370,7 +370,7 @@ impl<'a> Ptr<'a> {
     /// # Safety
     /// The actual type of the pointed-to value must be `T`.
     #[inline]
-    pub unsafe fn deref<T>(&self) -> &'a T {
+    pub unsafe fn deref<T: 'a>(&self) -> &'a T {
         self.ptr.cast::<T>().as_ref()
     }
 
