@@ -6,8 +6,8 @@ pub use fxhash;
 pub use hashbrown;
 pub use parking_lot;
 
-pub mod dyn_sparse_set;
-pub mod dyn_vec;
+pub mod sparse_set_erased;
+pub mod vec_erased;
 pub mod sparse_set;
 
 pub mod ptr;
@@ -29,8 +29,8 @@ pub mod prelude {
     pub use thiserror::Error;
 
     pub use super::{
-        dyn_sparse_set::DynSparseSet,
-        dyn_vec::DynVec,
+        sparse_set_erased::SparseSetErased,
+        vec_erased::VecErased,
         sparse_set::{
             SparseSet, SparseIndex,
         },

@@ -82,7 +82,7 @@ pub(super) struct Table {
     components: Box<[ComponentId]>,
     pub component_bits: FixedBitSet,
     entities: Vec<Entity>,
-    columns: SparseSet<ComponentId, DynVec>,
+    columns: SparseSet<ComponentId, VecErased>,
 }
 
 impl Table {
@@ -93,7 +93,7 @@ impl Table {
 
         for &id in components {
             let info = get_info(id);
-            columns.insert(id, DynVec::new(info.layout(), info.dropper().into()));
+            columns.insert(id, VecErased::new(info.layout(), info.dropper().into()));
             component_bits.insert(id.0);
         }
 
@@ -251,13 +251,13 @@ impl SparseIndex for TableId {
 
 #[derive(Default)]
 pub(super) struct SparseSets {
-    sets: SparseSet<ComponentId, DynSparseSet<u32>>,
+    sets: SparseSet<ComponentId, SparseSetErased<u32>>,
 }
 
 impl SparseSets {
     #[inline]
     pub fn init(&mut self, id: ComponentId, info: ComponentInfo) {
-        self.sets.insert(id, unsafe { DynSparseSet::new(info.layout(), info.dropper()) });
+        self.sets.insert(id, unsafe { SparseSetErased::new(info.layout(), info.dropper()) });
     }
 
     #[inline]

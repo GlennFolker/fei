@@ -1,6 +1,6 @@
 use crate::{
-    dyn_vec::{
-        DynVec, DynVecDrop,
+    vec_erased::{
+        VecErased, DropErased,
     },
     ptr::{
         Ptr, PtrMut, PtrOwned,
@@ -14,21 +14,21 @@ use std::{
     marker::PhantomData,
 };
 
-pub struct DynSparseSet<I: SparseIndex> {
+pub struct SparseSetErased<I: SparseIndex> {
     dense: FixedBitSet,
-    sparse: DynVec,
+    sparse: VecErased,
     len: usize,
     _marker: PhantomData<I>,
 }
 
-impl<I: SparseIndex> DynSparseSet<I> {
+impl<I: SparseIndex> SparseSetErased<I> {
     #[inline]
     pub const unsafe fn new(item_layout: Layout, drop: Option<unsafe fn(*mut u8)>) -> Self {
         Self {
             dense: FixedBitSet::new(),
-            sparse: DynVec::new(item_layout, match drop {
-                Some(dropper) => DynVecDrop::Manual(dropper),
-                None => DynVecDrop::None,
+            sparse: VecErased::new(item_layout, match drop {
+                Some(dropper) => DropErased::Manual(dropper),
+                None => DropErased::None,
             }),
             len: 0,
             _marker: PhantomData,
@@ -39,9 +39,9 @@ impl<I: SparseIndex> DynSparseSet<I> {
     pub const fn typed<T>() -> Self {
         Self {
             dense: FixedBitSet::new(),
-            sparse: unsafe { DynVec::new(Layout::new::<T>(), match drop_for::<T>() {
-                Some(dropper) => DynVecDrop::Manual(dropper),
-                None => DynVecDrop::None,
+            sparse: unsafe { VecErased::new(Layout::new::<T>(), match drop_for::<T>() {
+                Some(dropper) => DropErased::Manual(dropper),
+                None => DropErased::None,
             }) },
             len: 0,
             _marker: PhantomData,
@@ -75,7 +75,7 @@ impl<I: SparseIndex> DynSparseSet<I> {
     #[inline]
     pub unsafe fn insert_and_drop(&mut self, index: I, value: PtrOwned) {
         let dropper = self.sparse.dropper();
-        self.insert(index, value, |prev| if let DynVecDrop::Manual(dropper) = dropper {
+        self.insert(index, value, |prev| if let DropErased::Manual(dropper) = dropper {
             prev.drop_with(dropper)
         });
     }
@@ -95,7 +95,7 @@ impl<I: SparseIndex> DynSparseSet<I> {
     #[inline]
     pub fn remove_and_drop(&mut self, index: I) {
         let dropper = self.sparse.dropper();
-        self.remove(index, |prev| if let DynVecDrop::Manual(dropper) = dropper {
+        self.remove(index, |prev| if let DropErased::Manual(dropper) = dropper {
             unsafe { prev.drop_with(dropper) }
         });
     }
@@ -151,10 +151,10 @@ impl<I: SparseIndex> DynSparseSet<I> {
     }
 }
 
-impl<I: SparseIndex> Drop for DynSparseSet<I> {
+impl<I: SparseIndex> Drop for SparseSetErased<I> {
     #[inline]
     fn drop(&mut self) {
-        if let DynVecDrop::Manual(dropper) = self.sparse.dropper() {
+        if let DropErased::Manual(dropper) = self.sparse.dropper() {
             for index in self.dense.ones() {
                 unsafe {
                     // Safety: If the key exists, then the value exists and is initialized.
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn soundness() {
         unsafe {
-            let mut set = DynSparseSet::<usize>::typed::<Data>();
+            let mut set = SparseSetErased::<usize>::typed::<Data>();
 
             // Convert value to owning pointer.
             PtrOwned::take(Data::new(314), |ptr| set.insert(0, ptr, |prev| prev.drop_as::<Data>()));
