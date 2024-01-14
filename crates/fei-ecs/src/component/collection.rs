@@ -45,6 +45,9 @@ pub struct Components {
     component_set_ids: FxHashMap<TypeId, ComponentSetId>,
 }
 
+unsafe impl Send for Components {}
+unsafe impl Sync for Components {}
+
 impl Components {
     #[inline]
     pub fn register<T: Component>(&mut self) -> ComponentId {
@@ -88,7 +91,7 @@ impl Components {
     }
 
     #[inline]
-    pub fn get_component_id<T: Component>(&self) -> Option<ComponentId> {
+    pub fn get_id<T: Component>(&self) -> Option<ComponentId> {
         self.component_ids.get(&TypeId::of::<T>()).copied()
     }
 

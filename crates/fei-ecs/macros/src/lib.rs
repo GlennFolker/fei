@@ -13,14 +13,14 @@ use syn::{
     self,
     spanned::Spanned,
     DeriveInput,
-    Data, Error, Fields, Ident, Index, LitStr,
+    Data, Error, Fields, Ident, Index, LitBool, LitStr,
 };
 
 #[proc_macro_derive(Component, attributes(component))]
 pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     match (move || -> syn::Result<TokenStream> {
         let mut input = syn::parse::<DeriveInput>(input)?;
-        let fei_ecs = fei_macros::module("fei-ecs")?.ok_or_else(|| Error::new_spanned(&input, "`fei-world` is unavailable"))?;
+        let fei_ecs = fei_macros::module("fei-ecs")?.ok_or_else(|| Error::new_spanned(&input, "`fei-ecs` is unavailable"))?;
 
         let mut storage = "Table".to_string();
         for meta in input.attrs.iter().filter(|&attr| attr.path().is_ident("component")) {
@@ -43,7 +43,7 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         input.generics
             .make_where_clause()
             .predicates
-            .push(syn::parse2(quote! { Self: Send + Sync + 'static })?);
+            .push(syn::parse2(quote! { Self: 'static + Send + Sync + Sized })?);
 
         let target = &input.ident;
         let (impl_generics, type_generics, where_clause) = &input.generics.split_for_impl();
@@ -63,7 +63,7 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
 pub fn derive_component_set(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     match (move || -> syn::Result<TokenStream> {
         let mut input = syn::parse::<DeriveInput>(input)?;
-        let fei_ecs = fei_macros::module("fei-ecs")?.ok_or_else(|| Error::new_spanned(&input, "`fei-world` is unavailable."))?;
+        let fei_ecs = fei_macros::module("fei-ecs")?.ok_or_else(|| Error::new_spanned(&input, "`fei-ecs` is unavailable."))?;
 
         let Data::Struct(data) = &input.data else {
             return Err(Error::new_spanned(&input, "Only `struct`s are allowed for deriving `ComponentSet`."))
@@ -76,7 +76,7 @@ pub fn derive_component_set(input: proc_macro::TokenStream) -> proc_macro::Token
         input.generics
             .make_where_clause()
             .predicates
-            .push(syn::parse2(quote! { Self: Send + Sync + 'static })?);
+            .push(syn::parse2(quote! { Self: 'static + Send + Sync + Sized })?);
 
         let len = data.fields.len();
         if len == 0 {
@@ -128,6 +128,54 @@ pub fn derive_component_set(input: proc_macro::TokenStream) -> proc_macro::Token
                         }, callback);
                     )*
                 }
+            }
+        })
+    })() {
+        Ok(stream) => stream.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+#[proc_macro_derive(Resource, attributes(resource))]
+pub fn derive_resource(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    match (move || -> syn::Result<TokenStream> {
+        let mut input = syn::parse::<DeriveInput>(input)?;
+        let fei_ecs = fei_macros::module("fei-ecs")?.ok_or_else(|| Error::new_spanned(&input, "`fei-ecs` is unavailable."))?;
+
+        let mut send = None;
+        for meta in input.attrs.iter().filter(|&attr| attr.path().is_ident("resource")) {
+            meta.parse_nested_meta(|meta| if meta.path.is_ident("send") {
+                send = Some(meta.value()?.parse::<LitBool>()?.value);
+                Ok(())
+            } else {
+                Err(meta.error("Unsupported `Resource` attribute"))
+            })?;
+        }
+
+        let Some(send) = send else {
+            return Err(Error::new_spanned(&input, "#[resource(send = ...)] attribute missing"))
+        };
+
+        input.generics
+            .make_where_clause()
+            .predicates
+            .push(syn::parse2(if send {
+                quote! { Self: 'static + Send + Sync + Sized }
+            } else {
+                quote! { Self: 'static + Sized }
+            })?);
+
+        let query = {
+            let query = Ident::new(if send { "IsSend" } else { "NoSend" }, Span::call_site());
+            quote! { #fei_ecs::resource::#query }
+        };
+
+        let target = &input.ident;
+        let (impl_generics, type_generics, where_clause) = &input.generics.split_for_impl();
+
+        Ok(quote! {
+            unsafe impl #impl_generics #fei_ecs::resource::Resource for #target #type_generics #where_clause {
+                type Query = #query;
             }
         })
     })() {

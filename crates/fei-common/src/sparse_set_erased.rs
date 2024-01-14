@@ -1,10 +1,11 @@
 use crate::{
     vec_erased::{
-        VecErased, DropErased,
+        VecErased,
     },
     ptr::{
         Ptr, PtrMut, PtrOwned,
     },
+    DropErased,
     sparse_set::SparseIndex,
     drop_for,
 };
@@ -80,6 +81,7 @@ impl<'a, I: SparseIndex> SparseSetErased<'a, I> {
         });
     }
 
+    #[inline]
     pub fn remove<R: 'a>(&mut self, index: I, removed: impl FnOnce(PtrOwned<'a>) -> R) -> Option<R> {
         let index = index.into_index();
         self.dense.contains(index)

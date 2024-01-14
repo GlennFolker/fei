@@ -6,9 +6,11 @@ pub use fxhash;
 pub use hashbrown;
 pub use parking_lot;
 
+pub mod sparse_set;
+
+pub mod box_erased;
 pub mod sparse_set_erased;
 pub mod vec_erased;
-pub mod sparse_set;
 
 pub mod ptr;
 
@@ -29,13 +31,18 @@ pub mod prelude {
     pub use thiserror::Error;
 
     pub use super::{
-        sparse_set_erased::SparseSetErased,
-        vec_erased::VecErased,
         sparse_set::{
             SparseSet, SparseIndex,
         },
+        box_erased::{
+            BoxErased,
+            OptionExt,
+        },
+        sparse_set_erased::SparseSetErased,
+        vec_erased::VecErased,
         SliceExt,
         FxHashMap, FxHashSet,
+        default,
     };
 }
 
@@ -78,6 +85,75 @@ pub const fn array_layout(item_layout: Layout, len: usize) -> (Layout, usize) {
     (layout, padded_size)
 }
 
+/// Defines how items in the [`VecErased`] are dropped. Most commonly created with
+/// [`drop_for`]`::<T>().into()`, which will resolve to [`DropErased::None`] for
+/// [`None`] and [`DropErased::Auto`] for [`Some`].
+///
+/// # Safety
+/// - Argument of this function is the aligned type-erased pointer to the item to be dropped
+///   in-place.
+/// - The function must only call the drop implementation of the item's actual type, most commonly
+///   done by casting the pointer to `T` and invoking [`drop_in_place`](std::ptr::drop_in_place).
+#[derive(Copy, Clone)]
+pub enum DropErased {
+    /// The items will *not* be dropped. The only sensible reason this is chosen is to optimize types
+    /// that don't need to be dropped, as per [`needs_drop`](std::mem::needs_drop).
+    None,
+    /// The items will be dropped once the vector is dropped. This is the most common behavior, as
+    /// seen in regular [`Vec`]s.
+    Auto(unsafe fn(*mut u8)),
+    /// The items will *not* be dropped, but users are still able to manually drop the items
+    /// [in-place](PtrMut::drop_in_place_with) through the [`dropper`](VecErased::dropper) getter. This
+    /// is equivalent of a [`Vec`] containing [`MaybeUninit<T>`](std::mem::MaybeUninit).
+    Manual(unsafe fn(*mut u8)),
+}
+
+impl DropErased {
+    #[inline]
+    pub const fn automatic<T>() -> Self {
+        match drop_for::<T>() {
+            None => Self::None,
+            Some(dropper) => Self::Auto(dropper),
+        }
+    }
+
+    #[inline]
+    pub const fn manual<T>() -> Self {
+        match drop_for::<T>() {
+            None => Self::None,
+            Some(dropper) => Self::Manual(dropper),
+        }
+    }
+
+    /// Converts [`Automatic`](DropErased::Auto) to [`Manual`](DropErased::Manual).
+    #[inline]
+    pub const fn into_manual(self) -> Self {
+        match self {
+            Self::Auto(dropper) => Self::Manual(dropper),
+            _ => self,
+        }
+    }
+
+    /// Converts [`Manual`](DropErased::Manual) to [`Automatic`](DropErased::Auto).
+    #[inline]
+    pub const fn into_automatic(self) -> Self {
+        match self {
+            Self::Manual(dropper) => Self::Auto(dropper),
+            _ => self,
+        }
+    }
+}
+
+impl From<Option<unsafe fn(*mut u8)>> for DropErased {
+    #[inline]
+    fn from(dropper: Option<unsafe fn(*mut u8)>) -> Self {
+        match dropper {
+            Some(dropper) => Self::Auto(dropper),
+            None => Self::None,
+        }
+    }
+}
+
 /// Returns [`None`] if dropping a value of type `T` doesn't matter, and [`Some`] value containing
 /// an untyped wrapper to [`drop_in_place`](std::ptr::drop_in_place) otherwise.
 #[inline]
@@ -92,6 +168,11 @@ pub const fn drop_for<T>() -> Option<unsafe fn(*mut u8)> {
     } else {
         None
     }
+}
+
+#[inline]
+pub fn default<T: Default>() -> T {
+    T::default()
 }
 
 #[cfg(test)]

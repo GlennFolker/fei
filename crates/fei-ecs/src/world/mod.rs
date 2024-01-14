@@ -8,6 +8,7 @@ use crate::{
         Entity,
         Entities, SpawnError,
     },
+    resource::Resources,
     world::{
         EntityView, EntityViewMut,
     },
@@ -24,6 +25,7 @@ pub struct NonexistentError;
 #[derive(Default)]
 pub struct World {
     components: Components,
+    resources: Resources,
     entities: Entities,
 }
 

@@ -32,7 +32,7 @@ impl<'a> EntityView<'a> {
     #[inline]
     pub fn contains<T: Component>(&self) -> bool {
         self.components
-            .get_component_id::<T>()
+            .get_id::<T>()
             .is_some_and(|id| self.contains_id(id))
     }
 
@@ -48,7 +48,7 @@ impl<'a> EntityView<'a> {
     #[inline]
     pub fn get<T: Component>(&self) -> Option<&T> {
         self.components
-            .get_component_id::<T>()
+            .get_id::<T>()
             .and_then(|id| unsafe {
                 self.entities
                     .location(self.entity)
@@ -86,7 +86,7 @@ impl<'a> EntityViewMut<'a> {
     #[inline]
     pub fn contains<T: Component>(&self) -> bool {
         self.components
-            .get_component_id::<T>()
+            .get_id::<T>()
             .is_some_and(|id| self.contains_id(id))
     }
 
@@ -102,7 +102,7 @@ impl<'a> EntityViewMut<'a> {
     #[inline]
     pub fn get<T: Component>(&self) -> Option<&T> {
         self.components
-            .get_component_id::<T>()
+            .get_id::<T>()
             .and_then(|id| unsafe {
                 self.entities
                     .location(self.entity)

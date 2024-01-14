@@ -103,6 +103,7 @@ impl<I: SparseIndex, T> SparseSet<I, T> {
         }
     }
 
+    #[inline]
     pub fn remove(&mut self, index: I) -> Option<T> {
         let index = index.into_index();
         self.dense.contains(index)

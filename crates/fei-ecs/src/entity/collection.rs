@@ -92,25 +92,36 @@ impl Entities {
 
     /// Reserves an entity that is validated on the next [`flush`](Entities::flush).
     pub fn reserve(&self) -> Result<Entity, ReserveError> {
-        let reserved = self.reservoir.fetch_add(1, Ordering::Relaxed) as usize;
         let all_len = self.all.len();
         let free_len = self.free.len();
+        let reserved = {
+            let mut last = self.reservoir.load(Ordering::Relaxed);
+            loop {
+                let Some(reserved) = last.checked_add(1) else {
+                    return Err(ReserveError);
+                };
 
-        if reserved < Self::MAX - all_len + free_len {
-            Ok(if reserved < free_len {
-                // Reuse freed entities if possible.
-                self.free[reserved]
-            } else {
-                // Otherwise, prompt a new allocation in flush().
-                Entity {
-                    id: (all_len + reserved - free_len) as u32,
-                    generation: 0,
+                if reserved as usize >= Self::MAX - all_len + free_len {
+                    return Err(ReserveError);
                 }
-            })
+
+                match self.reservoir.compare_exchange_weak(last, reserved, Ordering::Relaxed, Ordering::Relaxed) {
+                    Ok(..) => break reserved as usize - 1,
+                    Err(id) => last = id,
+                }
+            }
+        };
+
+        Ok(if reserved < free_len {
+            // Reuse freed entities if possible.
+            self.free[reserved]
         } else {
-            self.reservoir.fetch_sub(1, Ordering::Relaxed);
-            Err(ReserveError)
-        }
+            // Otherwise, prompt a new allocation in flush().
+            Entity {
+                id: (all_len + reserved - free_len) as u32,
+                generation: 0,
+            }
+        })
     }
 
     /// Reserves many entities that are validated on the next [`flush`](Entities::flush).

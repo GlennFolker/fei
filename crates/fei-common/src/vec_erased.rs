@@ -4,7 +4,8 @@ use crate::{
     ptr::{
         Ptr, PtrMut, PtrOwned,
     },
-    array_layout, drop_for,
+    DropErased,
+    array_layout,
 };
 use std::{
     alloc::{
@@ -85,75 +86,6 @@ pub struct VecErased<'a> {
     cap: usize,
 
     _marker: PhantomData<&'a mut u8>,
-}
-
-/// Defines how items in the [`VecErased`] are dropped. Most commonly created with
-/// [`drop_for`]`::<T>().into()`, which will resolve to [`DropErased::None`] for
-/// [`None`] and [`DropErased::Auto`] for [`Some`].
-///
-/// # Safety
-/// - Argument of this function is the aligned type-erased pointer to the item to be dropped
-///   in-place.
-/// - The function must only call the drop implementation of the item's actual type, most commonly
-///   done by casting the pointer to `T` and invoking [`drop_in_place`](std::ptr::drop_in_place).
-#[derive(Copy, Clone)]
-pub enum DropErased {
-    /// The items will *not* be dropped. The only sensible reason this is chosen is to optimize types
-    /// that don't need to be dropped, as per [`needs_drop`](std::mem::needs_drop).
-    None,
-    /// The items will be dropped once the vector is dropped. This is the most common behavior, as
-    /// seen in regular [`Vec`]s.
-    Auto(unsafe fn(*mut u8)),
-    /// The items will *not* be dropped, but users are still able to manually drop the items
-    /// [in-place](PtrMut::drop_in_place_with) through the [`dropper`](VecErased::dropper) getter. This
-    /// is equivalent of a [`Vec`] containing [`MaybeUninit<T>`](std::mem::MaybeUninit).
-    Manual(unsafe fn(*mut u8)),
-}
-
-impl DropErased {
-    #[inline]
-    pub const fn automatic<T>() -> Self {
-        match drop_for::<T>() {
-            None => Self::None,
-            Some(dropper) => Self::Auto(dropper),
-        }
-    }
-
-    #[inline]
-    pub const fn manual<T>() -> Self {
-        match drop_for::<T>() {
-            None => Self::None,
-            Some(dropper) => Self::Manual(dropper),
-        }
-    }
-
-    /// Converts [`Automatic`](DropErased::Auto) to [`Manual`](DropErased::Manual).
-    #[inline]
-    pub const fn into_manual(self) -> Self {
-        match self {
-            Self::Auto(dropper) => Self::Manual(dropper),
-            _ => self,
-        }
-    }
-
-    /// Converts [`Manual`](DropErased::Manual) to [`Automatic`](DropErased::Auto).
-    #[inline]
-    pub const fn into_automatic(self) -> Self {
-        match self {
-            Self::Manual(dropper) => Self::Auto(dropper),
-            _ => self,
-        }
-    }
-}
-
-impl From<Option<unsafe fn(*mut u8)>> for DropErased {
-    #[inline]
-    fn from(dropper: Option<unsafe fn(*mut u8)>) -> Self {
-        match dropper {
-            Some(dropper) => Self::Auto(dropper),
-            None => Self::None,
-        }
-    }
 }
 
 impl<'a> VecErased<'a> {
