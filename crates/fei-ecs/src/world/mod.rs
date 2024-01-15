@@ -8,7 +8,10 @@ use crate::{
         Entity,
         Entities, SpawnError,
     },
-    resource::Resources,
+    resource::{
+        Resources,
+        Resource, ResourceLocal, LocalResult,
+    },
     world::{
         EntityView, EntityViewMut,
     },
@@ -57,6 +60,77 @@ impl World {
             .contains(entity)
             .then(|| unsafe { EntityViewMut::new(entity, &mut self.entities, &mut self.components) })
             .ok_or(NonexistentError)
+    }
+
+    #[inline]
+    pub fn init_res<T: Resource + FromWorld>(&mut self) -> Option<T> {
+        let resource = T::from_world(self);
+        self.insert_res(resource)
+    }
+
+    #[inline]
+    pub fn init_res_local<T: ResourceLocal + FromWorld>(&mut self) -> LocalResult<Option<T>> {
+        let resource = T::from_world(self);
+        self.insert_res_local(resource)
+    }
+
+    #[inline]
+    pub fn insert_res<T: Resource>(&mut self, resource: T) -> Option<T> {
+        let id = self.resources.register::<T>();
+        unsafe { self.resources.insert(id, BoxErased::typed(resource)).casted() }
+    }
+
+    #[inline]
+    pub fn insert_res_local<T: ResourceLocal>(&mut self, resource: T) -> LocalResult<Option<T>> {
+        let id = self.resources.register_local::<T>();
+        unsafe { self.resources.insert_local(id, BoxErased::typed(resource)).map(|opt| opt.casted()) }
+    }
+
+    #[inline]
+    pub fn remove_res<T: Resource>(&mut self) -> Option<T> {
+        let id = self.resources.register::<T>();
+        unsafe { self.resources.remove(id).casted() }
+    }
+
+    #[inline]
+    pub fn remove_res_local<T: ResourceLocal>(&mut self) -> LocalResult<Option<T>> {
+        let id = self.resources.register_local::<T>();
+        unsafe { self.resources.remove_local(id).map(|opt| opt.casted()) }
+    }
+
+    #[inline]
+    pub fn res<T: Resource>(&self) -> Option<&T> {
+        let id = self.resources.get_id::<T>()?;
+        unsafe { self.resources.get(id).ptr_deref() }
+    }
+
+    #[inline]
+    pub fn res_local<T: ResourceLocal>(&self) -> LocalResult<Option<&T>> {
+        let Some(id) = self.resources.get_local_id::<T>() else { return Ok(None) };
+        unsafe { self.resources.get_local(id).map(|opt| opt.ptr_deref()) }
+    }
+
+    #[inline]
+    pub fn res_mut<T: Resource>(&mut self) -> Option<&mut T> {
+        let id = self.resources.register::<T>();
+        unsafe { self.resources.get_mut(id).ptr_deref_mut() }
+    }
+
+    #[inline]
+    pub fn res_local_mut<T: ResourceLocal>(&mut self) -> LocalResult<Option<&mut T>> {
+        let id = self.resources.register_local::<T>();
+        unsafe { self.resources.get_local_mut(id).map(|opt| opt.ptr_deref_mut()) }
+    }
+}
+
+pub trait FromWorld {
+    fn from_world(world: &mut World) -> Self;
+}
+
+impl<T: Default> FromWorld for T {
+    #[inline]
+    fn from_world(_: &mut World) -> Self {
+        default()
     }
 }
 

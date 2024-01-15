@@ -13,7 +13,7 @@ use syn::{
     self,
     spanned::Spanned,
     DeriveInput,
-    Data, Error, Fields, Ident, Index, LitBool, LitStr,
+    Data, Error, Fields, Ident, Index, LitStr,
 };
 
 #[proc_macro_derive(Component, attributes(component))]
@@ -54,9 +54,9 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
             }
         })
     })() {
-        Ok(stream) => stream.into(),
-        Err(e) => e.to_compile_error().into(),
-    }
+        Ok(stream) => stream,
+        Err(e) => e.to_compile_error(),
+    }.into()
 }
 
 #[proc_macro_derive(ComponentSet)]
@@ -131,55 +131,46 @@ pub fn derive_component_set(input: proc_macro::TokenStream) -> proc_macro::Token
             }
         })
     })() {
-        Ok(stream) => stream.into(),
-        Err(e) => e.to_compile_error().into(),
-    }
+        Ok(stream) => stream,
+        Err(e) => e.to_compile_error(),
+    }.into()
 }
 
-#[proc_macro_derive(Resource, attributes(resource))]
+#[proc_macro_derive(Resource)]
 pub fn derive_resource(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    match (move || -> syn::Result<TokenStream> {
-        let mut input = syn::parse::<DeriveInput>(input)?;
-        let fei_ecs = fei_macros::module("fei-ecs")?.ok_or_else(|| Error::new_spanned(&input, "`fei-ecs` is unavailable."))?;
+    match derive_resource_generic(input, false) {
+        Ok(stream) => stream,
+        Err(e) => e.to_compile_error(),
+    }.into()
+}
 
-        let mut send = None;
-        for meta in input.attrs.iter().filter(|&attr| attr.path().is_ident("resource")) {
-            meta.parse_nested_meta(|meta| if meta.path.is_ident("send") {
-                send = Some(meta.value()?.parse::<LitBool>()?.value);
-                Ok(())
-            } else {
-                Err(meta.error("Unsupported `Resource` attribute"))
-            })?;
-        }
+#[proc_macro_derive(ResourceLocal)]
+pub fn derive_resource_local(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    match derive_resource_generic(input, true) {
+        Ok(stream) => stream,
+        Err(e) => e.to_compile_error(),
+    }.into()
+}
 
-        let Some(send) = send else {
-            return Err(Error::new_spanned(&input, "#[resource(send = ...)] attribute missing"))
-        };
+#[inline]
+fn derive_resource_generic(input: proc_macro::TokenStream, local: bool) -> syn::Result<TokenStream> {
+    let mut input = syn::parse::<DeriveInput>(input)?;
+    let fei_ecs = fei_macros::module("fei-ecs")?.ok_or_else(|| Error::new_spanned(&input, "`fei-ecs` is unavailable."))?;
+    let which = Ident::new(if local { "ResourceLocal" } else { "Resource" }, Span::call_site());
 
-        input.generics
-            .make_where_clause()
-            .predicates
-            .push(syn::parse2(if send {
-                quote! { Self: 'static + Send + Sync + Sized }
-            } else {
-                quote! { Self: 'static + Sized }
-            })?);
+    input.generics
+        .make_where_clause()
+        .predicates
+        .push(syn::parse2(if local {
+            quote! { Self: 'static + Sized }
+        } else {
+            quote! { Self: 'static + Send + Sync + Sized }
+        })?);
 
-        let query = {
-            let query = Ident::new(if send { "IsSend" } else { "NoSend" }, Span::call_site());
-            quote! { #fei_ecs::resource::#query }
-        };
+    let target = &input.ident;
+    let (impl_generics, type_generics, where_clause) = &input.generics.split_for_impl();
 
-        let target = &input.ident;
-        let (impl_generics, type_generics, where_clause) = &input.generics.split_for_impl();
-
-        Ok(quote! {
-            unsafe impl #impl_generics #fei_ecs::resource::Resource for #target #type_generics #where_clause {
-                type Query = #query;
-            }
-        })
-    })() {
-        Ok(stream) => stream.into(),
-        Err(e) => e.to_compile_error().into(),
-    }
+    Ok(quote! {
+        impl #impl_generics #fei_ecs::resource::#which for #target #type_generics #where_clause {}
+    })
 }

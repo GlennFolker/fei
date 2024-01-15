@@ -111,11 +111,11 @@ impl<'a> Drop for BoxErased<'a> {
     }
 }
 
-pub trait OptionExt<'a> {
+pub trait OptionBoxErasedExt<'a> {
     unsafe fn casted<T: 'a>(self) -> Option<T>;
 }
 
-impl<'a> OptionExt<'a> for Option<BoxErased<'a>> {
+impl<'a> OptionBoxErasedExt<'a> for Option<BoxErased<'a>> {
     #[inline]
     unsafe fn casted<T: 'a>(self) -> Option<T> {
         match self {

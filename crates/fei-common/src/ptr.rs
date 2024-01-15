@@ -404,3 +404,41 @@ impl<'a, T> From<&'a T> for Ptr<'a> {
         unsafe { Self::new(NonNull::from(value).cast()) }
     }
 }
+
+pub trait OptionPtrMutExt<'a>: OptionPtrExt<'a> {
+    unsafe fn ptr_deref_mut<T: 'a>(self) -> Option<&'a mut T>;
+}
+
+pub trait OptionPtrExt<'a> {
+    unsafe fn ptr_deref<T: 'a>(self) -> Option<&'a T>;
+}
+
+impl<'a> OptionPtrExt<'a> for Option<PtrMut<'a>> {
+    #[inline]
+    unsafe fn ptr_deref<T: 'a>(self) -> Option<&'a T> {
+        match self {
+            Some(ptr) => Some(ptr.deref()),
+            None => None,
+        }
+    }
+}
+
+impl<'a> OptionPtrMutExt<'a> for Option<PtrMut<'a>> {
+    #[inline]
+    unsafe fn ptr_deref_mut<T: 'a>(self) -> Option<&'a mut T> {
+        match self {
+            Some(mut ptr) => Some(ptr.deref_mut()),
+            None => None,
+        }
+    }
+}
+
+impl<'a> OptionPtrExt<'a> for Option<Ptr<'a>> {
+    #[inline]
+    unsafe fn ptr_deref<T: 'a>(self) -> Option<&'a T> {
+        match self {
+            Some(ptr) => Some(ptr.deref()),
+            None => None,
+        }
+    }
+}

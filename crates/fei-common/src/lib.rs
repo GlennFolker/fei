@@ -36,7 +36,10 @@ pub mod prelude {
         },
         box_erased::{
             BoxErased,
-            OptionExt,
+            OptionBoxErasedExt,
+        },
+        ptr::{
+            OptionPtrExt, OptionPtrMutExt,
         },
         sparse_set_erased::SparseSetErased,
         vec_erased::VecErased,
