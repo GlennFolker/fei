@@ -15,6 +15,7 @@ use crate::{
     world::{
         EntityView, EntityViewMut,
     },
+    ChangeMark, Mut,
 };
 
 mod view;
@@ -30,6 +31,8 @@ pub struct World {
     components: Components,
     resources: Resources,
     entities: Entities,
+
+    mark: ChangeMark,
 }
 
 impl World {
@@ -101,25 +104,25 @@ impl World {
     #[inline]
     pub fn res<T: Resource>(&self) -> Option<&T> {
         let id = self.resources.get_id::<T>()?;
-        unsafe { self.resources.get(id).ptr_deref() }
+        Some(unsafe { self.resources.get(id, self.mark)?.casted::<T>() }.into_inner())
     }
 
     #[inline]
     pub fn res_local<T: ResourceLocal>(&self) -> LocalResult<Option<&T>> {
         let Some(id) = self.resources.get_local_id::<T>() else { return Ok(None) };
-        unsafe { self.resources.get_local(id).map(|opt| opt.ptr_deref()) }
+        unsafe { self.resources.get_local(id, self.mark).map(|opt| opt.map(|opt| opt.casted::<T>().into_inner())) }
     }
 
     #[inline]
-    pub fn res_mut<T: Resource>(&mut self) -> Option<&mut T> {
+    pub fn res_mut<T: Resource>(&mut self) -> Option<Mut<T>> {
         let id = self.resources.register::<T>();
-        unsafe { self.resources.get_mut(id).ptr_deref_mut() }
+        Some(unsafe { self.resources.get_mut(id, self.mark, self.mark)?.casted() })
     }
 
     #[inline]
-    pub fn res_local_mut<T: ResourceLocal>(&mut self) -> LocalResult<Option<&mut T>> {
+    pub fn res_local_mut<T: ResourceLocal>(&mut self) -> LocalResult<Option<Mut<T>>> {
         let id = self.resources.register_local::<T>();
-        unsafe { self.resources.get_local_mut(id).map(|opt| opt.ptr_deref_mut()) }
+        unsafe { self.resources.get_local_mut(id, self.mark, self.mark).map(|opt| opt.map(|opt| opt.casted())) }
     }
 }
 
@@ -145,7 +148,7 @@ mod tests {
         struct Name(String);
         #[derive(Component, Debug, PartialEq)]
         struct Height(f32);
-        #[derive(Component, Debug, Eq, PartialOrd, PartialEq)]
+        #[derive(Component, Debug, Eq, PartialEq)]
         struct LoveInterest(Entity);
 
         let mut ecs = World::default();

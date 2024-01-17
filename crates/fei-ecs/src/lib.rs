@@ -5,6 +5,10 @@ pub mod component;
 pub mod resource;
 pub mod world;
 
+mod change;
+
+pub use change::*;
+
 pub mod prelude {
     pub use fei_ecs_macros::{
         self,

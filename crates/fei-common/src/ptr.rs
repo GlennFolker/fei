@@ -324,7 +324,19 @@ impl<'a> PtrMut<'a> {
 
     /// Immutably re-borrows the pointer as [`Ptr`].
     #[inline]
-    pub fn as_ref(&mut self) -> Ptr {
+    pub fn borrow(&self) -> Ptr {
+        unsafe { Ptr::new(self.ptr) }
+    }
+
+    /// Mutably re-borrows the pointer. Useful if you have a `&mut PtrMut`, but want a `PtrMut` instead.
+    #[inline]
+    pub fn borrow_mut(&mut self) -> PtrMut {
+        unsafe { PtrMut::new(self.ptr) }
+    }
+
+    /// Erases the mutability property of this pointer.
+    #[inline]
+    pub fn into_ref(self) -> Ptr<'a> {
         unsafe { Ptr::new(self.ptr) }
     }
 }
@@ -351,7 +363,7 @@ impl<'a> Ptr<'a> {
     /// Given `T` as the actual value type, callers must ensure the following:
     /// - There may not be other mutable references to the given pointed-to value. [`PtrOwned`] or
     ///   [`PtrMut`] is allowed only if there is only one instance, and this function is called from
-    ///   [`PtrOwned::as_ref`] or [`PtrMut::as_ref`].
+    ///   [`PtrOwned::as_ref`] or [`PtrMut::borrow`].
     /// - The resulting `Ptr` mustn't live longer than the pointed-to value; it must be consumed
     ///   before the original value goes out of scope.
     /// - `ptr` must point to an initialized instance of `T`.

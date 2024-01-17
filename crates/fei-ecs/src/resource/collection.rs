@@ -1,14 +1,16 @@
 use fei_common::prelude::*;
-use crate::resource::{
-    Resource, ResourceId,
-    ResourceLocal, ResourceLocalId,
+use crate::{
+    resource::{
+        Resource, ResourceId,
+        ResourceLocal, ResourceLocalId,
+    },
+    ChangeMark, ChangeMarks, RefErased, MutErased,
 };
 use std::{
     any::TypeId,
     mem::MaybeUninit,
     thread::ThreadId,
 };
-use fei_common::ptr::{Ptr, PtrMut};
 
 #[derive(Error, Debug, Eq, PartialEq)]
 #[error("non-send resource originating from thread {:?} queried from thread {:?}", .origin, .caller)]
@@ -20,10 +22,13 @@ pub struct LocalError {
 pub type LocalResult<T> = Result<T, LocalError>;
 
 #[derive(Default)]
-pub struct Resources where ThreadId: Copy {
+pub struct Resources {
     containers: SparseSet<ResourceId, BoxErased<'static>>,
     local_containers: SparseSet<ResourceLocalId, BoxErased<'static>>,
     local_threads: Vec<MaybeUninit<ThreadId>>,
+
+    changes: Vec<ChangeMarks>,
+    local_changes: Vec<ChangeMarks>,
 
     ids: FxHashMap<TypeId, ResourceId>,
     local_ids: FxHashMap<TypeId, ResourceLocalId>,
@@ -36,14 +41,19 @@ impl Resources {
     #[inline]
     pub fn register<T: Resource>(&mut self) -> ResourceId {
         let id = self.ids.len();
-        *self.ids.entry(TypeId::of::<T>()).or_insert(ResourceId(id))
+        *self.ids.entry(TypeId::of::<T>()).or_insert_with(|| {
+            self.changes.push(default());
+            ResourceId(id)
+        })
     }
 
     #[inline]
     pub fn register_local<T: ResourceLocal>(&mut self) -> ResourceLocalId {
+        let id = self.ids.len();
         *self.local_ids.entry(TypeId::of::<T>()).or_insert_with(|| {
             self.local_threads.push(MaybeUninit::uninit());
-            ResourceLocalId(self.local_threads.len() - 1)
+            self.local_changes.push(default());
+            ResourceLocalId(id)
         })
     }
 
@@ -100,23 +110,27 @@ impl Resources {
     }
 
     #[inline]
-    pub unsafe fn get(&self, id: ResourceId) -> Option<Ptr> {
-        self.containers.get(id).map(BoxErased::borrow)
+    pub unsafe fn get(&self, id: ResourceId, last_mark: ChangeMark) -> Option<RefErased> {
+        self.containers.get(id).map(|value| RefErased::new(
+            value.borrow(), *self.changes.get_unchecked(id.0), last_mark,
+        ))
     }
 
     #[inline]
-    pub unsafe fn get_mut(&mut self, id: ResourceId) -> Option<PtrMut> {
-        self.containers.get_mut(id).map(BoxErased::borrow_mut)
+    pub unsafe fn get_mut(&mut self, id: ResourceId, last_mark: ChangeMark, current_mark: ChangeMark) -> Option<MutErased> {
+        self.containers.get_mut(id).map(|value| MutErased::new(
+            value.borrow_mut(), self.changes.get_unchecked_mut(id.0).into(), last_mark, current_mark,
+        ))
     }
 
     #[inline]
-    pub unsafe fn get_local(&self, id: ResourceLocalId) -> LocalResult<Option<Ptr>> {
+    pub unsafe fn get_local(&self, id: ResourceLocalId, last_mark: ChangeMark) -> LocalResult<Option<RefErased>> {
         let caller = std::thread::current().id();
         match self.local_containers.get(id) {
             Some(value) => {
                 let origin = self.local_threads.get_unchecked(id.0).assume_init();
                 if origin == caller {
-                    Ok(Some(value.borrow()))
+                    Ok(Some(RefErased::new(value.borrow(), *self.changes.get_unchecked(id.0), last_mark)))
                 } else {
                     Err(LocalError { origin, caller, })
                 }
@@ -126,13 +140,13 @@ impl Resources {
     }
 
     #[inline]
-    pub unsafe fn get_local_mut(&mut self, id: ResourceLocalId) -> LocalResult<Option<PtrMut>> {
+    pub unsafe fn get_local_mut(&mut self, id: ResourceLocalId, last_mark: ChangeMark, current_mark: ChangeMark) -> LocalResult<Option<MutErased>> {
         let caller = std::thread::current().id();
         match self.local_containers.get_mut(id) {
             Some(value) => {
                 let origin = self.local_threads.get_unchecked(id.0).assume_init();
                 if origin == caller {
-                    Ok(Some(value.borrow_mut()))
+                    Ok(Some(MutErased::new(value.borrow_mut(), self.changes.get_unchecked_mut(id.0).into(), last_mark, current_mark)))
                 } else {
                     Err(LocalError { origin, caller, })
                 }
