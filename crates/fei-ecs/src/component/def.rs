@@ -154,7 +154,6 @@ pub struct ComponentSetInfo {
 impl ComponentSetInfo {
     pub fn new<T: ComponentSet>(mut register_component: impl FnMut(TypeId, ComponentInfo) -> ComponentId) -> Self {
         let mut offsets = Vec::new();
-
         let mut table_components = Vec::new();
         let mut sparse_set_components = Vec::new();
         let mut zst_components = Vec::new();
@@ -180,8 +179,13 @@ impl ComponentSetInfo {
         let mut component_offsets = SparseSet::with_capacity(id_len);
 
         for (offset, id) in offsets {
+            #[fei_panic]
+            fn duplicate_error<T: ComponentSet>() -> ! {
+                panic!("duplicate component for set `{}`", type_name::<T>())
+            }
+
             if component_offsets.insert(id, offset).is_some() {
-                panic!("duplicate component for set `{}`", type_name::<T>());
+                duplicate_error::<T>()
             } else {
                 components.push(id);
                 component_bits.insert(id.0);

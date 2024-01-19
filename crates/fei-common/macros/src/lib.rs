@@ -96,3 +96,15 @@ pub fn impl_tuples(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         Err(e) => e.to_compile_error().into(),
     }
 }
+
+#[proc_macro_attribute]
+pub fn fei_panic(_: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = TokenStream::from(input);
+    let annotated = quote! {
+        #[cold]
+        #[inline(never)]
+        #[track_caller]
+        #input
+    };
+    annotated.into()
+}

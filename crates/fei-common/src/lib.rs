@@ -20,7 +20,7 @@ pub use ext::*;
 pub mod prelude {
     pub use fei_common_macros::{
         self,
-        impl_tuples,
+        impl_tuples, fei_panic,
     };
 
     pub use anyhow;
@@ -49,14 +49,12 @@ pub mod prelude {
     };
 }
 
+use fei_common_macros::fei_panic;
 use fxhash::FxBuildHasher;
 use hashbrown::{
     HashMap, HashSet,
 };
-use std::{
-    alloc::Layout,
-    mem,
-};
+use std::alloc::Layout;
 
 /// A [`HashMap`] that uses [`FxHasher`](fxhash::FxHasher) as the hasher for performance gains.
 pub type FxHashMap<K, V> = HashMap<K, V, FxBuildHasher>;
@@ -66,6 +64,11 @@ pub type FxHashSet<T> = HashSet<T, FxBuildHasher>;
 /// Converts the layout of `T` into `[T; len]` while ensures the total size in bytes never exceeds
 /// [`isize::MAX`].
 pub const fn array_layout(item_layout: Layout, len: usize) -> (Layout, usize) {
+    #[fei_panic]
+    const fn overallocate_error() -> ! {
+        panic!("too big allocation size")
+    }
+
     let size = item_layout.size();
     let align = item_layout.align();
 
@@ -76,13 +79,15 @@ pub const fn array_layout(item_layout: Layout, len: usize) -> (Layout, usize) {
     }
 
     let Some(alloc_size) = padded_size.checked_mul(len) else {
-        panic!("too big allocation size");
+        overallocate_error()
     };
 
     let layout = {
-        assert!(alloc_size <= isize::MAX as usize - (align - 1), "too big allocation size");
-        // Safety: Requirements just checked above.
-        unsafe { Layout::from_size_align_unchecked(alloc_size, align) }
+        if alloc_size <= isize::MAX as usize - (align - 1) {
+            overallocate_error()
+        } else {
+            unsafe { Layout::from_size_align_unchecked(alloc_size, align) }
+        }
     };
 
     (layout, padded_size)
@@ -166,7 +171,7 @@ pub const fn drop_for<T>() -> Option<unsafe fn(*mut u8)> {
         ptr.cast::<T>().drop_in_place();
     }
 
-    if mem::needs_drop::<T>() {
+    if std::mem::needs_drop::<T>() {
         Some(dropper::<T>)
     } else {
         None
