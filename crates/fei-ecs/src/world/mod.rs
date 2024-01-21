@@ -18,8 +18,10 @@ use crate::{
     ChangeMark, Mut,
 };
 
+mod cell;
 mod view;
 
+pub use cell::*;
 pub use view::*;
 
 #[derive(Error, Debug)]
