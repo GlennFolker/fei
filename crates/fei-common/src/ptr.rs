@@ -401,6 +401,11 @@ impl<'a> Ptr<'a> {
     pub unsafe fn byte_offset(self, offset: isize) -> Self {
         Self::new(NonNull::new_unchecked(self.ptr.as_ptr().offset(offset)))
     }
+
+    #[inline]
+    pub unsafe fn unique(self) -> PtrMut<'a> {
+        PtrMut::new(self.ptr)
+    }
 }
 
 impl<'a, T> From<&'a mut T> for Ptr<'a> {

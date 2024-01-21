@@ -191,7 +191,7 @@ impl<'a> VecErased<'a> {
     ///   [`write`](VecErased::write) or [`write_unchecked`](VecErased::write_unchecked).
     #[inline]
     pub unsafe fn set_len(&mut self, len: usize) {
-        debug_assert!(len <= self.cap);
+        debug_assert!(len <= self.cap, "{} > {}", len, self.cap);
         self.len = len;
     }
 
@@ -211,7 +211,7 @@ impl<'a> VecErased<'a> {
     /// `index` must be lesser than [`len`](VecErased::len).
     #[inline]
     pub unsafe fn get_unchecked(&self, index: usize) -> Ptr {
-        debug_assert!(index < self.len);
+        debug_assert!(index < self.len, "{} >= {}", index, self.len);
         Ptr::new(NonNull::new_unchecked(self.array.as_ptr().add(index * self.array_stride)))
     }
 
@@ -231,7 +231,7 @@ impl<'a> VecErased<'a> {
     /// `index` must be lesser than [`len`](VecErased::len).
     #[inline]
     pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> PtrMut {
-        debug_assert!(index < self.len);
+        debug_assert!(index < self.len, "{} >= {}", index, self.len);
         PtrMut::new(NonNull::new_unchecked(self.array.as_ptr().add(index * self.array_stride)))
     }
 
@@ -252,7 +252,7 @@ impl<'a> VecErased<'a> {
     /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn set_unchecked<'t: 'a>(&mut self, index: usize, value: PtrOwned<'t>) {
-        debug_assert!(index < self.len);
+        debug_assert!(index < self.len, "{} >= {}", index, self.len);
 
         let size = self.layout.size();
         let dropper = self.dropper;
@@ -282,7 +282,7 @@ impl<'a> VecErased<'a> {
     /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn swap_unchecked<'t: 'a, R: 'a>(&mut self, index: usize, value: PtrOwned<'t>, prev: impl FnOnce(PtrOwned<'a>) -> R) -> R {
-        debug_assert!(index < self.len);
+        debug_assert!(index < self.len, "{} >= {}", index, self.len);
 
         let size = self.layout.size();
         self.get_unchecked_mut(index)
@@ -309,7 +309,7 @@ impl<'a> VecErased<'a> {
     /// - `value` must contain the same data type as the vector contains.
     #[inline]
     pub unsafe fn write_unchecked<'t: 'a>(&mut self, index: usize, value: PtrOwned<'t>) {
-        debug_assert!(index < self.len);
+        debug_assert!(index < self.len, "{} >= {}", index, self.len);
 
         let size = self.layout.size();
         self.get_unchecked_mut(index)

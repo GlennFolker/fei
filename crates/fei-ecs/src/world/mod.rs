@@ -15,7 +15,7 @@ use crate::{
     world::{
         EntityView, EntityViewMut,
     },
-    ChangeMark, Mut,
+    ChangeMark, Ref, Mut,
 };
 
 mod cell;
@@ -34,7 +34,8 @@ pub struct World {
     resources: Resources,
     entities: Entities,
 
-    mark: ChangeMark,
+    last: ChangeMark,
+    current: ChangeMark,
 }
 
 impl World {
@@ -82,13 +83,13 @@ impl World {
     #[inline]
     pub fn insert_res<T: Resource>(&mut self, resource: T) -> Option<T> {
         let id = self.resources.register::<T>();
-        unsafe { self.resources.insert(id, BoxErased::typed(resource)).casted() }
+        unsafe { self.resources.insert(id, BoxErased::typed(resource), self.current).casted() }
     }
 
     #[inline]
     pub fn insert_res_local<T: ResourceLocal>(&mut self, resource: T) -> LocalResult<Option<T>> {
         let id = self.resources.register_local::<T>();
-        unsafe { self.resources.insert_local(id, BoxErased::typed(resource)).map(|opt| opt.casted()) }
+        unsafe { self.resources.insert_local(id, BoxErased::typed(resource), self.current).map(|opt| opt.casted()) }
     }
 
     #[inline]
@@ -104,27 +105,41 @@ impl World {
     }
 
     #[inline]
-    pub fn res<T: Resource>(&self) -> Option<&T> {
+    pub fn res<T: Resource>(&self) -> Option<Ref<T>> {
         let id = self.resources.get_id::<T>()?;
-        Some(unsafe { self.resources.get(id, self.mark)?.casted::<T>() }.into_inner())
-    }
-
-    #[inline]
-    pub fn res_local<T: ResourceLocal>(&self) -> LocalResult<Option<&T>> {
-        let Some(id) = self.resources.get_local_id::<T>() else { return Ok(None) };
-        unsafe { self.resources.get_local(id, self.mark).map(|opt| opt.map(|opt| opt.casted::<T>().into_inner())) }
+        unsafe { self.cell().res_by_id(id, self.last).map(|value| value.casted()) }
     }
 
     #[inline]
     pub fn res_mut<T: Resource>(&mut self) -> Option<Mut<T>> {
         let id = self.resources.register::<T>();
-        Some(unsafe { self.resources.get_mut(id, self.mark, self.mark)?.casted() })
+        let last = self.last;
+        let current = self.current;
+        unsafe { self.cell_mut().res_by_id_mut(id, last, current).map(|value| value.casted()) }
+    }
+
+    #[inline]
+    pub fn res_local<T: ResourceLocal>(&self) -> LocalResult<Option<Ref<T>>> {
+        let Some(id) = self.resources.get_local_id::<T>() else { return Ok(None) };
+        unsafe { self.cell().res_local_by_id(id, self.last).map(|opt| opt.map(|value| value.casted())) }
     }
 
     #[inline]
     pub fn res_local_mut<T: ResourceLocal>(&mut self) -> LocalResult<Option<Mut<T>>> {
         let id = self.resources.register_local::<T>();
-        unsafe { self.resources.get_local_mut(id, self.mark, self.mark).map(|opt| opt.map(|opt| opt.casted())) }
+        let last = self.last;
+        let current = self.current;
+        unsafe { self.cell_mut().res_local_by_id_mut(id, last, current).map(|opt| opt.map(|value| value.casted())) }
+    }
+
+    #[inline]
+    pub fn cell(&self) -> WorldCell {
+        unsafe { WorldCell::read(self) }
+    }
+
+    #[inline]
+    pub fn cell_mut(&mut self) -> WorldCell {
+        unsafe { WorldCell::read(self) }
     }
 }
 

@@ -83,7 +83,7 @@ pub const fn array_layout(item_layout: Layout, len: usize) -> (Layout, usize) {
     };
 
     let layout = {
-        if alloc_size <= isize::MAX as usize - (align - 1) {
+        if alloc_size > isize::MAX as usize - (align - 1) {
             overallocate_error()
         } else {
             unsafe { Layout::from_size_align_unchecked(alloc_size, align) }

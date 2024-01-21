@@ -4,11 +4,11 @@ use fei_common::{
     },
 };
 use std::{
+    cell::UnsafeCell,
     marker::PhantomData,
     ops::{
         Deref, DerefMut,
     },
-    ptr::NonNull,
 };
 
 #[derive(Default, Copy, Clone, Eq, PartialEq)]
@@ -19,15 +19,14 @@ pub struct ChangeMark {
 
 impl ChangeMark {
     #[inline]
-    pub fn newer_than(self, other: Self) -> bool {
+    pub const fn new(tick: u32) -> Self {
+        Self { tick, }
+    }
+
+    #[inline]
+    pub const fn newer_than(self, other: Self) -> bool {
         self.tick > other.tick
     }
-}
-
-#[derive(Default, Copy, Clone, Eq, PartialEq)]
-pub struct ChangeMarks {
-    pub(crate) added: ChangeMark,
-    pub(crate) updated: ChangeMark,
 }
 
 pub trait ChangeAware<'a> {
@@ -52,14 +51,15 @@ pub trait ChangeAwareMut<'a>: ChangeAware<'a> {
 
 pub struct RefErased<'a> {
     inner: Ptr<'a>,
-    current_marks: ChangeMarks,
-    last_mark: ChangeMark,
+    added: ChangeMark,
+    updated: ChangeMark,
+    last: ChangeMark,
 }
 
 impl<'a> RefErased<'a> {
     #[inline]
-    pub unsafe fn new(inner: Ptr<'a>, current: ChangeMarks, last: ChangeMark) -> Self {
-        Self { inner, current_marks: current, last_mark: last, }
+    pub unsafe fn new(inner: Ptr<'a>, added: ChangeMark, updated: ChangeMark, last: ChangeMark) -> Self {
+        Self { inner, added, updated, last, }
     }
 
     #[inline]
@@ -76,12 +76,12 @@ impl<'a> ChangeAware<'a> for RefErased<'a> {
 
     #[inline]
     fn is_added(&self) -> bool {
-        self.current_marks.added.newer_than(self.last_mark)
+        self.added.newer_than(self.last)
     }
 
     #[inline]
     fn is_updated(&self) -> bool {
-        self.current_marks.updated.newer_than(self.last_mark)
+        self.updated.newer_than(self.last)
     }
 
     #[inline]
@@ -144,15 +144,16 @@ impl<'a, T> Deref for Ref<'a, T> {
 
 pub struct MutErased<'a> {
     inner: PtrMut<'a>,
-    current_marks: NonNull<ChangeMarks>,
-    last_mark: ChangeMark,
-    current_mark: ChangeMark,
+    added: &'a UnsafeCell<ChangeMark>,
+    updated: &'a UnsafeCell<ChangeMark>,
+    last: ChangeMark,
+    current: ChangeMark,
 }
 
 impl<'a> MutErased<'a> {
     #[inline]
-    pub unsafe fn new(inner: PtrMut<'a>, current: NonNull<ChangeMarks>, last: ChangeMark, caller: ChangeMark) -> Self {
-        Self { inner, current_marks: current, last_mark: last, current_mark: caller, }
+    pub unsafe fn new(inner: PtrMut<'a>, added: &'a UnsafeCell<ChangeMark>, updated: &'a UnsafeCell<ChangeMark>, last: ChangeMark, current: ChangeMark) -> Self {
+        Self { inner, added, updated, last, current, }
     }
 
     #[inline]
@@ -169,12 +170,12 @@ impl<'a> ChangeAware<'a> for MutErased<'a> {
 
     #[inline]
     fn is_added(&self) -> bool {
-        unsafe { self.current_marks.as_ref() }.added.newer_than(self.last_mark)
+        unsafe { *self.added.get() }.newer_than(self.last)
     }
 
     #[inline]
     fn is_updated(&self) -> bool {
-        unsafe { self.current_marks.as_ref() }.updated.newer_than(self.last_mark)
+        unsafe { *self.updated.get() }.newer_than(self.last)
     }
 
     #[inline]
@@ -188,7 +189,7 @@ impl<'a> ChangeAwareMut<'a> for MutErased<'a> {
 
     #[inline]
     fn update(&mut self) {
-        unsafe { self.current_marks.as_mut() }.updated = self.current_mark;
+        unsafe { *self.updated.get() = self.current };
     }
 
     #[inline]
@@ -205,7 +206,7 @@ impl<'a> ChangeAwareMut<'a> for MutErased<'a> {
 
 pub struct Mut<'a, T> {
     inner: MutErased<'a>,
-    _marker: PhantomData<&'a T>,
+    _marker: PhantomData<&'a mut T>,
 }
 
 impl<'a, T> Mut<'a, T> {
