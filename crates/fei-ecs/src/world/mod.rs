@@ -10,12 +10,16 @@ use crate::{
     },
     resource::{
         Resources,
-        Resource, ResourceLocal, LocalResult,
+        Resource, ResourceId,
+        ResourceLocal, ResourceLocalId, LocalResult,
     },
     world::{
         EntityView, EntityViewMut,
     },
     ChangeMark, Ref, Mut,
+};
+use std::sync::atomic::{
+    AtomicU32, Ordering,
 };
 
 mod cell;
@@ -28,17 +32,39 @@ pub use view::*;
 #[error("entity does not exist")]
 pub struct NonexistentError;
 
-#[derive(Default)]
 pub struct World {
     components: Components,
     resources: Resources,
     entities: Entities,
 
-    last: ChangeMark,
-    current: ChangeMark,
+    current: AtomicU32,
+}
+
+impl Default for World {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            components: default(),
+            resources: default(),
+            entities: default(),
+
+            current: AtomicU32::new(1),
+        }
+    }
 }
 
 impl World {
+    #[inline]
+    pub fn change_mark(&self) -> ChangeMark {
+        ChangeMark::new(self.current.fetch_add(1, Ordering::Relaxed))
+    }
+
+    #[inline]
+    pub fn change_mark_mut(&mut self) -> ChangeMark {
+        let current = self.current.get_mut();
+        ChangeMark::new(std::mem::replace(current, current.wrapping_add(1)))
+    }
+
     #[inline]
     pub fn spawn<T: ComponentSet>(&mut self, set: T) -> Result<EntityViewMut, SpawnError> {
         let mut view = self.spawn_empty()?;
@@ -69,6 +95,16 @@ impl World {
     }
 
     #[inline]
+    pub fn register_res<T: Resource>(&mut self) -> ResourceId {
+        self.resources.register::<T>()
+    }
+
+    #[inline]
+    pub fn register_res_local<T: ResourceLocal>(&mut self) -> ResourceLocalId {
+        self.resources.register_local::<T>()
+    }
+
+    #[inline]
     pub fn init_res<T: Resource + FromWorld>(&mut self) -> Option<T> {
         let resource = T::from_world(self);
         self.insert_res(resource)
@@ -83,13 +119,15 @@ impl World {
     #[inline]
     pub fn insert_res<T: Resource>(&mut self, resource: T) -> Option<T> {
         let id = self.resources.register::<T>();
-        unsafe { self.resources.insert(id, BoxErased::typed(resource), self.current).casted() }
+        let last = self.change_mark_mut();
+        unsafe { self.resources.insert(id, BoxErased::typed(resource), last).casted() }
     }
 
     #[inline]
     pub fn insert_res_local<T: ResourceLocal>(&mut self, resource: T) -> LocalResult<Option<T>> {
         let id = self.resources.register_local::<T>();
-        unsafe { self.resources.insert_local(id, BoxErased::typed(resource), self.current).map(|opt| opt.casted()) }
+        let last = self.change_mark_mut();
+        unsafe { self.resources.insert_local(id, BoxErased::typed(resource), last).map(|opt| opt.casted()) }
     }
 
     #[inline]
@@ -107,29 +145,27 @@ impl World {
     #[inline]
     pub fn res<T: Resource>(&self) -> Option<Ref<T>> {
         let id = self.resources.get_id::<T>()?;
-        unsafe { self.cell().res_by_id(id, self.last).map(|value| value.casted()) }
+        unsafe { self.cell().res_by_id(id, self.change_mark()).map(|value| value.casted()) }
     }
 
     #[inline]
     pub fn res_mut<T: Resource>(&mut self) -> Option<Mut<T>> {
         let id = self.resources.register::<T>();
-        let last = self.last;
-        let current = self.current;
-        unsafe { self.cell_mut().res_by_id_mut(id, last, current).map(|value| value.casted()) }
+        let last = self.change_mark_mut();
+        unsafe { self.cell_mut().res_by_id_mut(id, last, last).map(|value| value.casted()) }
     }
 
     #[inline]
     pub fn res_local<T: ResourceLocal>(&self) -> LocalResult<Option<Ref<T>>> {
         let Some(id) = self.resources.get_local_id::<T>() else { return Ok(None) };
-        unsafe { self.cell().res_local_by_id(id, self.last).map(|opt| opt.map(|value| value.casted())) }
+        unsafe { self.cell().res_local_by_id(id, self.change_mark()).map(|opt| opt.map(|value| value.casted())) }
     }
 
     #[inline]
     pub fn res_local_mut<T: ResourceLocal>(&mut self) -> LocalResult<Option<Mut<T>>> {
         let id = self.resources.register_local::<T>();
-        let last = self.last;
-        let current = self.current;
-        unsafe { self.cell_mut().res_local_by_id_mut(id, last, current).map(|opt| opt.map(|value| value.casted())) }
+        let last = self.change_mark_mut();
+        unsafe { self.cell_mut().res_local_by_id_mut(id, last, last).map(|opt| opt.map(|value| value.casted())) }
     }
 
     #[inline]
