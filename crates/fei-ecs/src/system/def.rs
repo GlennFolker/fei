@@ -18,7 +18,7 @@ pub trait System: 'static + Send + Sync {
     unsafe fn call_unchecked(&mut self, input: Self::In, world: WorldCell) -> anyhow::Result<Self::Out>;
 }
 
-pub trait SystemParam {
+pub trait SystemParam: Sized {
     type State: 'static + Send + Sync;
     type Item<'w, 's>: SystemParam<State = Self::State>;
 
@@ -56,7 +56,7 @@ pub trait IntoSystem<Marker>: Sized {
     fn into_system(self, world: &mut World) -> anyhow::Result<Self::System>;
 }
 
-pub trait SystemFn<Marker>: 'static + Send + Sync {
+pub trait SystemFn<Marker>: 'static + Send + Sync + Sized {
     type In;
     type Out;
     type Param: SystemParam;
