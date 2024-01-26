@@ -82,8 +82,8 @@ impl<Func: SystemFn<Marker>, Marker> System for SystemFnImpl<Func, Marker> {
 
     #[inline]
     unsafe fn call_unchecked(&mut self, input: Self::In, world: WorldCell) -> anyhow::Result<Self::Out> {
-        let (last, current) = world.get().change_mark();
-        let last = std::mem::replace(&mut self.last, last);
+        let current = world.get().change_mark();
+        let last = std::mem::replace(&mut self.last, current);
         self.func.call(input, world, &mut self.state, last, current)
     }
 }
@@ -98,7 +98,7 @@ impl<Func: SystemFn<Marker>, Marker: 'static> IntoSystem<Marker> for Func {
         Ok(SystemFnImpl {
             state: Func::Param::construct_state(world)?,
             func: self,
-            last: default(),
+            last: world.last_change_mark(),
         })
     }
 }
@@ -144,12 +144,12 @@ macro_rules! impl_system_fn {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fei_ecs_macros::Resource;
     use crate::{
         resource::{
-            Resource, ResourceId,
+            Res, ResMut,
         },
         ChangeAware,
-        Ref,
     };
 
     #[test]
@@ -179,49 +179,40 @@ mod tests {
     }
 
     #[test]
-    fn system_param() -> anyhow::Result<()> {
-        struct Param<'world, T: Resource>(Ref<'world, T>);
-        impl Resource for u32 {}
+    fn change_detection() -> anyhow::Result<()> {
+        #[derive(Resource)]
+        struct Fei;
 
-        unsafe impl<'world, T: Resource> ReadOnlySystemParam for Param<'world, T> {}
-        impl<'world, T: Resource> SystemParam for Param<'world, T> {
-            type State = ResourceId;
-            type Item<'w, 's> = Param<'w, T>;
-            type ReadOnly = Self;
-
-            #[inline]
-            unsafe fn construct<'w, 's>(world: WorldCell<'w>, state: &'s mut Self::State, last: ChangeMark, _: ChangeMark) -> anyhow::Result<Self::Item<'w, 's>> {
-                world
-                    .res_by_id(*state, last).ok_or_else(|| anyhow::anyhow!("resource doesn't exist"))
-                    .map(|res| Param(res.casted()))
-            }
-
-            #[inline]
-            fn construct_state(world: &mut World) -> anyhow::Result<Self::State> {
-                Ok(world.register_res::<T>())
-            }
+        fn a_sys(In(change): In<bool>, mut fei: ResMut<Fei>) -> anyhow::Result<(bool, bool)> {
+            if change { *fei = Fei; }
+            Ok((fei.is_added(), fei.is_updated()))
         }
 
-        fn param_sys(In(check): In<u32>, param: Param<u32>) -> anyhow::Result<()> {
-            if check == 314 {
-                assert!(param.0.is_added());
-            } else {
-                assert!(!param.0.is_added());
-            }
-
-            assert!(param.0.is_updated());
-            assert_eq!(check, *param.0);
-
-            Ok(())
+        fn b_sys(fei: Res<Fei>) -> anyhow::Result<(bool, bool)> {
+            Ok((fei.is_added(), fei.is_updated()))
         }
 
         let mut world = World::default();
-        let mut sys = param_sys.into_system(&mut world)?;
+        world.insert_res(Fei);
 
-        world.insert_res(314);
-        sys.call(314, &mut world)?;
-        *world.res_mut::<u32>().unwrap() = 159;
-        sys.call(159, &mut world)?;
+        let mut a = a_sys.into_system(&mut world)?;
+        world.sync_change_mark();
+        let mut b = b_sys.into_system(&mut world)?;
+
+        assert_eq!(a.call(false, &mut world)?, (true, true));
+        assert_eq!(b.call((), &mut world)?, (false, false));
+
+        world.sync_change_mark();
+        assert_eq!(a.call(false, &mut world)?, (false, false));
+        assert_eq!(b.call((), &mut world)?, (false, false));
+
+        world.sync_change_mark();
+        assert_eq!(a.call(true, &mut world)?, (false, true));
+        assert_eq!(b.call((), &mut world)?, (false, true));
+
+        world.sync_change_mark();
+        assert_eq!(a.call(false, &mut world)?, (false, false));
+        assert_eq!(b.call((), &mut world)?, (false, false));
 
         Ok(())
     }

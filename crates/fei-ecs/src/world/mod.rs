@@ -37,6 +37,7 @@ pub struct World {
     resources: Resources,
     entities: Entities,
 
+    last: ChangeMark,
     current: AtomicU32,
 }
 
@@ -48,6 +49,7 @@ impl Default for World {
             resources: default(),
             entities: default(),
 
+            last: ChangeMark::new(0),
             current: AtomicU32::new(1),
         }
     }
@@ -55,21 +57,29 @@ impl Default for World {
 
 impl World {
     #[inline]
-    pub fn change_mark(&self) -> (ChangeMark, ChangeMark) {
-        let last = self.current.fetch_add(1, Ordering::Relaxed);
-        (ChangeMark::new(last), ChangeMark::new(last.wrapping_add(1)))
+    pub fn change_mark(&self) -> ChangeMark {
+        ChangeMark::new(self.current.fetch_add(1, Ordering::Relaxed))
     }
 
     #[inline]
-    pub fn change_mark_mut(&mut self) -> (ChangeMark, ChangeMark) {
+    pub fn change_mark_mut(&mut self) -> ChangeMark {
         let last = self.current.get_mut();
-        let current = last.wrapping_add(1);
-        (ChangeMark::new(std::mem::replace(last, current)), ChangeMark::new(current))
+        ChangeMark::new(std::mem::replace(last, last.wrapping_add(1)))
     }
 
     #[inline]
     pub fn read_change_mark(&self) -> ChangeMark {
         ChangeMark::new(self.current.load(Ordering::Relaxed))
+    }
+
+    #[inline]
+    pub fn last_change_mark(&self) -> ChangeMark {
+        self.last
+    }
+
+    #[inline]
+    pub fn sync_change_mark(&mut self) {
+        self.last = self.change_mark_mut();
     }
 
     #[inline]
@@ -126,15 +136,15 @@ impl World {
     #[inline]
     pub fn insert_res<T: Resource>(&mut self, resource: T) -> Option<T> {
         let id = self.resources.register::<T>();
-        let (last, ..) = self.change_mark_mut();
-        unsafe { self.resources.insert(id, BoxErased::typed(resource), last).casted() }
+        let current = self.change_mark_mut();
+        unsafe { self.resources.insert(id, BoxErased::typed(resource), current).casted() }
     }
 
     #[inline]
     pub fn insert_res_local<T: ResourceLocal>(&mut self, resource: T) -> LocalResult<Option<T>> {
         let id = self.resources.register_local::<T>();
-        let (last, ..) = self.change_mark_mut();
-        unsafe { self.resources.insert_local(id, BoxErased::typed(resource), last).map(|opt| opt.casted()) }
+        let current = self.change_mark_mut();
+        unsafe { self.resources.insert_local(id, BoxErased::typed(resource), current).map(|opt| opt.casted()) }
     }
 
     #[inline]
@@ -158,7 +168,8 @@ impl World {
     #[inline]
     pub fn res_mut<T: Resource>(&mut self) -> Option<Mut<T>> {
         let id = self.resources.register::<T>();
-        let (last, current) = self.change_mark_mut();
+        let current = self.change_mark_mut();
+        let last = self.last;
         unsafe { self.cell_mut().res_by_id_mut(id, last, current).map(|value| value.casted()) }
     }
 
@@ -171,7 +182,8 @@ impl World {
     #[inline]
     pub fn res_local_mut<T: ResourceLocal>(&mut self) -> LocalResult<Option<Mut<T>>> {
         let id = self.resources.register_local::<T>();
-        let (last, current) = self.change_mark_mut();
+        let current = self.change_mark_mut();
+        let last = self.last;
         unsafe { self.cell_mut().res_local_by_id_mut(id, last, current).map(|opt| opt.map(|value| value.casted())) }
     }
 
