@@ -21,22 +21,26 @@ pub trait System: 'static + Send + Sync {
 pub trait SystemParam: Sized {
     type State: 'static + Send + Sync;
     type Item<'w, 's>: SystemParam<State = Self::State>;
+    type ReadOnly: ReadOnlySystemParam<State = Self::State>;
 
-    unsafe fn construct<'w, 's>(world: WorldCell<'w>, state: &'s mut Self::State, last: ChangeMark) -> anyhow::Result<Self::Item<'w, 's>>;
+    unsafe fn construct<'w, 's>(world: WorldCell<'w>, state: &'s mut Self::State, last: ChangeMark, current: ChangeMark) -> anyhow::Result<Self::Item<'w, 's>>;
 
     fn construct_state(world: &mut World) -> anyhow::Result<Self::State>;
 }
+
+pub unsafe trait ReadOnlySystemParam: SystemParam {}
 
 macro_rules! impl_system_param {
     ($($tuple_type:ident $tuple_index:tt),*) => {
         impl<$($tuple_type: SystemParam,)*> SystemParam for ($($tuple_type,)*) {
             type State = ($($tuple_type::State,)*);
             type Item<'w, 's> = ($($tuple_type::Item<'w, 's>,)*);
+            type ReadOnly = ($($tuple_type::ReadOnly,)*);
 
             #[inline]
             #[allow(unused)]
-            unsafe fn construct<'w, 's>(world: WorldCell<'w>, state: &'s mut Self::State, last: ChangeMark) -> anyhow::Result<Self::Item<'w, 's>> {
-                Ok(($($tuple_type::construct(world, &mut state.$tuple_index, last)?,)*))
+            unsafe fn construct<'w, 's>(world: WorldCell<'w>, state: &'s mut Self::State, last: ChangeMark, current: ChangeMark) -> anyhow::Result<Self::Item<'w, 's>> {
+                Ok(($($tuple_type::construct(world, &mut state.$tuple_index, last, current)?,)*))
             }
 
             #[inline]
@@ -45,6 +49,8 @@ macro_rules! impl_system_param {
                 Ok(($($tuple_type::construct_state(world)?,)*))
             }
         }
+
+        unsafe impl<$($tuple_type: ReadOnlySystemParam,)*> ReadOnlySystemParam for ($($tuple_type,)*) {}
     }
 } impl_tuples!(impl_system_param! 8);
 
@@ -61,7 +67,7 @@ pub trait SystemFn<Marker>: 'static + Send + Sync + Sized {
     type Out;
     type Param: SystemParam;
 
-    unsafe fn call(&mut self, input: Self::In, world: WorldCell, state: &mut <Self::Param as SystemParam>::State, last: ChangeMark) -> anyhow::Result<Self::Out>;
+    unsafe fn call(&mut self, input: Self::In, world: WorldCell, state: &mut <Self::Param as SystemParam>::State, last: ChangeMark, current: ChangeMark) -> anyhow::Result<Self::Out>;
 }
 
 pub struct SystemFnImpl<Func: SystemFn<Marker>, Marker: 'static> {
@@ -76,8 +82,9 @@ impl<Func: SystemFn<Marker>, Marker> System for SystemFnImpl<Func, Marker> {
 
     #[inline]
     unsafe fn call_unchecked(&mut self, input: Self::In, world: WorldCell) -> anyhow::Result<Self::Out> {
-        let last = std::mem::replace(&mut self.last, world.get().change_mark());
-        self.func.call(input, world, &mut self.state, last)
+        let (last, current) = world.get().change_mark();
+        let last = std::mem::replace(&mut self.last, last);
+        self.func.call(input, world, &mut self.state, last, current)
     }
 }
 
@@ -111,8 +118,8 @@ macro_rules! impl_system_fn {
 
             #[inline]
             #[allow(unused)]
-            unsafe fn call(&mut self, (): Self::In, world: WorldCell, state: &mut <Self::Param as SystemParam>::State, last: ChangeMark) -> anyhow::Result<Self::Out> {
-                (self)($($tuple_type::construct(world, &mut state.$tuple_index, last)?,)*)
+            unsafe fn call(&mut self, (): Self::In, world: WorldCell, state: &mut <Self::Param as SystemParam>::State, last: ChangeMark, current: ChangeMark) -> anyhow::Result<Self::Out> {
+                (self)($($tuple_type::construct(world, &mut state.$tuple_index, last, current)?,)*)
             }
         }
 
@@ -127,8 +134,8 @@ macro_rules! impl_system_fn {
 
             #[inline]
             #[allow(unused)]
-            unsafe fn call(&mut self, input: Self::In, world: WorldCell, state: &mut <Self::Param as SystemParam>::State, last: ChangeMark) -> anyhow::Result<Self::Out> {
-                (self)(In(input), $($tuple_type::construct(world, &mut state.$tuple_index, last)?,)*)
+            unsafe fn call(&mut self, input: Self::In, world: WorldCell, state: &mut <Self::Param as SystemParam>::State, last: ChangeMark, current: ChangeMark) -> anyhow::Result<Self::Out> {
+                (self)(In(input), $($tuple_type::construct(world, &mut state.$tuple_index, last, current)?,)*)
             }
         }
     }
@@ -173,15 +180,17 @@ mod tests {
 
     #[test]
     fn system_param() -> anyhow::Result<()> {
-        struct Param<'w, T: Resource>(Ref<'w, T>);
+        struct Param<'world, T: Resource>(Ref<'world, T>);
         impl Resource for u32 {}
 
-        impl<T: Resource> SystemParam for Param<'_, T> {
+        unsafe impl<'world, T: Resource> ReadOnlySystemParam for Param<'world, T> {}
+        impl<'world, T: Resource> SystemParam for Param<'world, T> {
             type State = ResourceId;
             type Item<'w, 's> = Param<'w, T>;
+            type ReadOnly = Self;
 
             #[inline]
-            unsafe fn construct<'w, 's>(world: WorldCell<'w>, state: &'s mut Self::State, last: ChangeMark) -> anyhow::Result<Self::Item<'w, 's>> {
+            unsafe fn construct<'w, 's>(world: WorldCell<'w>, state: &'s mut Self::State, last: ChangeMark, _: ChangeMark) -> anyhow::Result<Self::Item<'w, 's>> {
                 world
                     .res_by_id(*state, last).ok_or_else(|| anyhow::anyhow!("resource doesn't exist"))
                     .map(|res| Param(res.casted()))

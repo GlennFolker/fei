@@ -55,14 +55,21 @@ impl Default for World {
 
 impl World {
     #[inline]
-    pub fn change_mark(&self) -> ChangeMark {
-        ChangeMark::new(self.current.fetch_add(1, Ordering::Relaxed))
+    pub fn change_mark(&self) -> (ChangeMark, ChangeMark) {
+        let last = self.current.fetch_add(1, Ordering::Relaxed);
+        (ChangeMark::new(last), ChangeMark::new(last.wrapping_add(1)))
     }
 
     #[inline]
-    pub fn change_mark_mut(&mut self) -> ChangeMark {
-        let current = self.current.get_mut();
-        ChangeMark::new(std::mem::replace(current, current.wrapping_add(1)))
+    pub fn change_mark_mut(&mut self) -> (ChangeMark, ChangeMark) {
+        let last = self.current.get_mut();
+        let current = last.wrapping_add(1);
+        (ChangeMark::new(std::mem::replace(last, current)), ChangeMark::new(current))
+    }
+
+    #[inline]
+    pub fn read_change_mark(&self) -> ChangeMark {
+        ChangeMark::new(self.current.load(Ordering::Relaxed))
     }
 
     #[inline]
@@ -119,14 +126,14 @@ impl World {
     #[inline]
     pub fn insert_res<T: Resource>(&mut self, resource: T) -> Option<T> {
         let id = self.resources.register::<T>();
-        let last = self.change_mark_mut();
+        let (last, ..) = self.change_mark_mut();
         unsafe { self.resources.insert(id, BoxErased::typed(resource), last).casted() }
     }
 
     #[inline]
     pub fn insert_res_local<T: ResourceLocal>(&mut self, resource: T) -> LocalResult<Option<T>> {
         let id = self.resources.register_local::<T>();
-        let last = self.change_mark_mut();
+        let (last, ..) = self.change_mark_mut();
         unsafe { self.resources.insert_local(id, BoxErased::typed(resource), last).map(|opt| opt.casted()) }
     }
 
@@ -145,27 +152,27 @@ impl World {
     #[inline]
     pub fn res<T: Resource>(&self) -> Option<Ref<T>> {
         let id = self.resources.get_id::<T>()?;
-        unsafe { self.cell().res_by_id(id, self.change_mark()).map(|value| value.casted()) }
+        unsafe { self.cell().res_by_id(id, self.read_change_mark()).map(|value| value.casted()) }
     }
 
     #[inline]
     pub fn res_mut<T: Resource>(&mut self) -> Option<Mut<T>> {
         let id = self.resources.register::<T>();
-        let last = self.change_mark_mut();
-        unsafe { self.cell_mut().res_by_id_mut(id, last, last).map(|value| value.casted()) }
+        let (last, current) = self.change_mark_mut();
+        unsafe { self.cell_mut().res_by_id_mut(id, last, current).map(|value| value.casted()) }
     }
 
     #[inline]
     pub fn res_local<T: ResourceLocal>(&self) -> LocalResult<Option<Ref<T>>> {
         let Some(id) = self.resources.get_local_id::<T>() else { return Ok(None) };
-        unsafe { self.cell().res_local_by_id(id, self.change_mark()).map(|opt| opt.map(|value| value.casted())) }
+        unsafe { self.cell().res_local_by_id(id, self.read_change_mark()).map(|opt| opt.map(|value| value.casted())) }
     }
 
     #[inline]
     pub fn res_local_mut<T: ResourceLocal>(&mut self) -> LocalResult<Option<Mut<T>>> {
         let id = self.resources.register_local::<T>();
-        let last = self.change_mark_mut();
-        unsafe { self.cell_mut().res_local_by_id_mut(id, last, last).map(|opt| opt.map(|value| value.casted())) }
+        let (last, current) = self.change_mark_mut();
+        unsafe { self.cell_mut().res_local_by_id_mut(id, last, current).map(|opt| opt.map(|value| value.casted())) }
     }
 
     #[inline]
@@ -204,9 +211,9 @@ mod tests {
         #[derive(Component, Debug, Eq, PartialEq)]
         struct LoveInterest(Entity);
 
-        let mut ecs = World::default();
+        let mut world = World::default();
         let fei = {
-            let mut fei = ecs.spawn((Name("fei".to_string()), Height(-100.0)))?;
+            let mut fei = world.spawn((Name("fei".to_string()), Height(-100.0)))?;
             assert_eq!(fei.get::<Name>(), Some(&Name("fei".to_string())));
             assert_eq!(fei.get_mut::<Height>(), Some(&mut Height(-100.0)));
             assert_eq!(fei.get::<LoveInterest>(), None);
@@ -220,16 +227,16 @@ mod tests {
         };
 
         let who_knows = {
-            let mut who_knows = ecs.spawn_empty()?;
+            let mut who_knows = world.spawn_empty()?;
             who_knows.insert((Name("oh wouldn't you like to know :^)".to_string()), LoveInterest(fei)));
 
             let who_knows = who_knows.id();
-            ecs.view_mut(fei)?.insert(LoveInterest(who_knows));
+            world.view_mut(fei)?.insert(LoveInterest(who_knows));
             who_knows
         };
 
-        assert_eq!(ecs.view(fei)?.get::<LoveInterest>(), Some(&LoveInterest(who_knows)));
-        assert_eq!(ecs.view(who_knows)?.get::<LoveInterest>(), Some(&LoveInterest(fei)));
+        assert_eq!(world.view(fei)?.get::<LoveInterest>(), Some(&LoveInterest(who_knows)));
+        assert_eq!(world.view(who_knows)?.get::<LoveInterest>(), Some(&LoveInterest(fei)));
         Ok(())
     }
 }
